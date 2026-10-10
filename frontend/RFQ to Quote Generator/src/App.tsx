@@ -185,7 +185,10 @@ function App() {
         : `${rfq.gateway?.model || rfq.parser_mode}${rfq.gateway?.latency_ms ? ` · ${(rfq.gateway.latency_ms / 1000).toFixed(1)}s` : ""}`, "check", true],
     ["Catalog matching", `${lines.filter((l) => l.match).length} of ${lines.length} matched`, "check", lines.some((l) => l.match)],
     ["Compliance", `${lines.filter((l) => l.compliance.status === "pass").length} pass · ${lines.filter((l) => l.compliance.status === "blocked").length} blocked`, "shield", lines.some((l) => l.compliance.status !== "not_evaluated")],
-    ["Price benchmark", priced.length ? `${priced.length} priced vs benchmark` : "Waiting on matches", "activity", priced.length > 0],
+    ["Price benchmark", priced.length ? (() => {
+        const ctx = priced.find((l) => l.pricing?.market_context)?.pricing?.market_context;
+        return `${priced.length} priced${ctx ? ` · ${ctx.live ? "FRED" : "synthetic"} ${ctx.series_id} · ${ctx.as_of}` : " vs benchmark"}`;
+      })() : "Waiting on matches", "activity", priced.length > 0],
     ["Quote ready", quote ? quote.id : allApproved ? "All lines approved" : `${rfq.approved} of ${rfq.line_count} approved`, "spark", !!quote],
   ] : [];
 
@@ -363,7 +366,13 @@ function App() {
                   <div className="card-title"><div><Icon name="spark" size={17} />{current.clarifications.length || current.blockers.length ? "Needs your attention" : "Line detail"}</div><span>{open.length}</span></div>
                   <div className="attention-content">
                     <div className="attention-head"><span className="amber-icon"><Icon name="clock" size={15} /></span><div><strong>{current.raw_text}</strong><span>{current.id} · {(STATUS_LABEL[current.status] || { text: current.status }).text}</span></div></div>
-                    {current.pricing && <p>{current.pricing.explanation}{current.pricing.below_benchmark_pct != null ? ` ${current.pricing.below_benchmark_pct}% below benchmark.` : ""}</p>}
+                    {current.pricing && <p>{current.pricing.explanation.replace(/ Market context:.*$/, "")}{current.pricing.below_benchmark_pct != null ? ` ${current.pricing.below_benchmark_pct}% below benchmark.` : ""}</p>}
+                    {current.pricing?.market_context && (
+                      <p className="market-cite"><strong>{current.pricing.market_context.live ? "Live market:" : "Synthetic index:"}</strong>{" "}
+                        {current.pricing.market_context.source_url
+                          ? <a href={current.pricing.market_context.source_url} target="_blank" rel="noreferrer">{current.pricing.market_context.citation}</a>
+                          : current.pricing.market_context.citation}</p>
+                    )}
                     {current.compliance.issues.length > 0 && <p className="issue">{current.compliance.issues.join(" · ")}</p>}
                     {current.clarifications.map((c) => (
                       <div className="question-box" key={c.field}>

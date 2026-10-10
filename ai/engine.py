@@ -9,6 +9,7 @@ from decimal import Decimal, ROUND_HALF_UP
 import re
 from typing import Any
 import database
+from ai import market
 
 
 def sample_catalog() -> list[dict[str, Any]]:
@@ -347,10 +348,20 @@ def analyze_line(line: dict, catalog: list[dict] = None, markup: float = 0.225) 
         benchmark_record = database.find_benchmark(it.get('benchmark_id')) if it.get('benchmark_id') else None
     except Exception:
         benchmark_record = None
+    # Dataset benchmarks are $/lb, not $/sheet: compare per pound, and only when the SKU's weight is known.
+    basis = 'per_unit'
+    unit_per_lb = bench_per_lb = None
+    weight = _parse_price(it.get('weight_lb_each') or 0)
     if benchmark_record:
-        bench = money(float(benchmark_record.get('median_per_lb', 0)))
-        bench_source = benchmark_record.get('basis') or 'N/A'
+        bench_source = benchmark_record.get('source') or benchmark_record.get('basis') or 'N/A'
         bench_as_of = benchmark_record.get('as_of') or '2026-10-10'
+        median = _parse_price(benchmark_record.get('median_per_lb') or 0)
+        if weight and median:
+            basis = 'per_lb'
+            unit_per_lb, bench_per_lb = money(unit / weight), money(median)
+            bench = money(median * weight)          # the benchmark expressed per unit, for display
+        else:
+            bench = None                            # no weight: a $/lb vs $/sheet % would be false
     elif it.get('benchmark_usd') is not None:
         bench = money(float(it['benchmark_usd']))
         bench_source = it.get('benchmark_source') or 'N/A'
@@ -359,7 +370,17 @@ def analyze_line(line: dict, catalog: list[dict] = None, markup: float = 0.225) 
         bench = None
         bench_source = 'N/A'
         bench_as_of = '2026-10-10'
-    
+    if basis == 'per_lb':
+        below = money(((bench_per_lb - unit_per_lb) / bench_per_lb) * 100)
+        compare = f'; ${unit_per_lb:.2f}/lb vs a synthetic market median of ${bench_per_lb:.2f}/lb'
+    else:
+        below = money(((bench - unit) / bench) * 100) if bench and bench > 0 else None
+        compare = f'; compared with a synthetic demo benchmark of ${bench:.2f}' if bench else ''
+    try:
+        market_context = market.market_context_for_line(line.get('material') or it.get('material_family') or it.get('material'), line.get('grade'))
+    except Exception:
+        market_context = None
+
     line['pricing'] = {
         'supplier_cost_usd': supplier_cost,
         'markup_pct': money(markup*100),
@@ -369,11 +390,13 @@ def analyze_line(line: dict, catalog: list[dict] = None, markup: float = 0.225) 
         'benchmark_unit_usd': bench,
         'benchmark_source': bench_source,
         'benchmark_as_of': bench_as_of,
-        'below_benchmark_pct': money(((bench-unit)/bench)*100) if bench and bench > 0 else None,
-        'explanation': (
-            f'Cost ${supplier_cost:.2f} × (1 + {markup*100:g}% markup) = ${unit:.2f}'
-            + (f'; compared with a synthetic demo benchmark of ${bench:.2f}.' if bench else '.')
-        ),
+        'below_benchmark_pct': below,
+        'benchmark_basis': basis,
+        'unit_price_per_lb': unit_per_lb,
+        'benchmark_per_lb': bench_per_lb,
+        'explanation': f'Cost ${supplier_cost:.2f} × (1 + {markup*100:g}% markup) = ${unit:.2f}{compare}.'
+                       + (f' Market context: {market_context["citation"]}.' if market_context else ''),
+        'market_context': market_context,
         'data_is_synthetic': True,
     }
 

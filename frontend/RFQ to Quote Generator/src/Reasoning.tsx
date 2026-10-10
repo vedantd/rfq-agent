@@ -57,7 +57,10 @@ function entries(r: RFQ): string[][] {
         const p = l.pricing!;
         const vs = p.below_benchmark_pct == null ? "no benchmark to compare"
           : p.below_benchmark_pct >= 0 ? `${p.below_benchmark_pct}% below the benchmark` : `${Math.abs(p.below_benchmark_pct)}% above the benchmark`;
-        return `${n(i)}: cost ${money(p.supplier_cost_usd)} × (1 + ${p.markup_pct}% markup) = ${money(p.unit_price_usd)}/unit vs benchmark ${money(p.benchmark_unit_usd)} (${p.benchmark_source}, ${p.benchmark_as_of}) → ${vs}. Line total ${money(p.line_total_usd)}.`;
+        const basis = p.benchmark_basis === "per_lb" && p.unit_price_per_lb && p.benchmark_per_lb
+          ? ` (${money(p.unit_price_per_lb)}/lb vs ${money(p.benchmark_per_lb)}/lb)` : "";
+        const mkt = p.market_context ? ` Market context: ${p.market_context.citation}.` : "";
+        return `${n(i)}: cost ${money(p.supplier_cost_usd)} × (1 + ${p.markup_pct}% markup) = ${money(p.unit_price_usd)}/unit vs benchmark ${money(p.benchmark_unit_usd)}${basis} (${p.benchmark_source}, ${p.benchmark_as_of}) → ${vs}. Line total ${money(p.line_total_usd)}.${mkt}`;
       })
     : ["No line is priced yet: prices need a catalog match first."];
 

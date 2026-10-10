@@ -30,8 +30,15 @@ export interface Line {
     supplier_cost_usd: number; markup_pct: number; unit_price_usd: number; quantity: number; line_total_usd: number;
     benchmark_unit_usd: number; benchmark_source: string; benchmark_as_of: string; below_benchmark_pct: number | null;
     explanation: string; data_is_synthetic: boolean;
+    benchmark_basis?: "per_unit" | "per_lb"; unit_price_per_lb?: number | null; benchmark_per_lb?: number | null;
+    market_context?: MarketContext | null;
   };
   compliance: { status: string; issues: string[]; available_certificates?: string[]; country_of_origin?: string | null; supplier_standard?: string; note?: string };
+}
+
+export interface MarketContext {
+  series_id: string; name: string; value: number; unit?: string | null; as_of?: string | null;
+  live: boolean; source?: string | null; source_url?: string | null; driver?: string; citation: string;
 }
 
 export interface RFQ {
@@ -101,6 +108,7 @@ export const api = {
   clarify: (id: string, lineId: string, fields: Record<string, string | number>) => call<Line>("PATCH", `/v1/rfqs/${id}/lines/${lineId}`, fields),
   approve: (id: string, lineId: string) => call<Line>("POST", `/v1/rfqs/${id}/lines/${lineId}/approve`),
   emailDraft: (id: string) => call<{ to: string | null; subject: string; body: string; delivery_status: string }>("GET", `/v1/rfqs/${id}/clarifications/email-draft`),
+  marketIndices: () => call<{ mode: string; fred_configured: boolean; note: string; indices: MarketContext[] }>("GET", "/v1/market/indices"),
   catalog: () => call<{ items: CatalogItem[] }>("GET", "/v1/catalog/items").then((r) => r.items),
   draftQuote: (id: string) => call<Quote>("POST", `/v1/rfqs/${id}/quotes/draft`),
 };

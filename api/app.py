@@ -17,7 +17,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 import httpx
 import database
-from ai import engine
+from ai import engine, market
 from api import store
 import database
 from ai.gateway import (
@@ -363,6 +363,11 @@ def check_catalog_health(tid: str = Depends(tenant)):
     if not is_valid:
         raise HTTPException(503, {'status': 'degraded', 'error': message})
     return {'status': 'healthy', 'message': message}
+
+@app.get('/v1/market/indices',tags=['Market'])
+def get_market_indices(tid: str = Depends(tenant)):
+    """Latest FRED commodity indices (nickel, aluminum, mill-shape PPIs); synthetic fallback without FRED_API_KEY."""
+    return market.fetch_indices()
 
 @app.post('/v1/rfqs/{rfq_id}/quotes/draft',status_code=201,tags=['Review & quotes'])
 def draft_quote(rfq_id:str,tid:str=Depends(tenant)):

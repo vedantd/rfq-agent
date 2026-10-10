@@ -71,7 +71,9 @@ export default function QuoteReport({ quote, rfq, onClose }: { quote: Quote; rfq
             <strong>How these prices were set</strong>
             {quote.lines.map((q, i) => {
               const p = lineOf(q.line_id)?.pricing;
-              return p ? <p key={q.line_id}>Line {i + 1}: {p.explanation}</p> : null;
+              return p ? <p key={q.line_id}>Line {i + 1}: {p.explanation.replace(/ Market context:.*$/, "")}
+                {p.market_context && <> <span className="market-cite">{p.market_context.live ? "Live market: " : "Synthetic index: "}
+                  {p.market_context.source_url ? <a href={p.market_context.source_url} target="_blank" rel="noreferrer">{p.market_context.citation}</a> : p.market_context.citation}</span></>}</p> : null;
             })}
           </section>
         )}
