@@ -43,7 +43,7 @@ function App() {
   const [quote, setQuote] = useState<Quote | null>(null);
   const [selectedLine, setSelectedLine] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
-  const [fileUrl, setFileUrl] = useState<{ url: string; type: string } | null>(null);   // local preview of the upload
+  const [fileUrl, setFileUrl] = useState<{ url: string; type: string; size: number } | null>(null);   // local preview of the upload
   const [buyer, setBuyer] = useState("Northline Fabrication");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -121,13 +121,13 @@ function App() {
   const process = (file: File) => run(`Reading ${file.name}…`, async () => {
     setDropOpen(false);
     setPending({ name: file.name, started: Date.now() });   // same page: the pipeline shows progress
+    setFileName(file.name);   // preview the upload right away, while it is being read
+    setFileUrl((old) => { if (old) URL.revokeObjectURL(old.url); return { url: URL.createObjectURL(file), type: file.type || "", size: file.size }; });
     say(`Reading ${file.name}. I will extract every line, match it to the catalog, price it and check compliance.`);
     let r: RFQ;
     // Call 1: extraction only (the slow LLM step). The lines show as soon as it returns.
     try { r = await api.uploadRfq(file, buyer || "buyer", undefined, true); }
     finally { setPending(null); }
-    setFileName(file.name);
-    setFileUrl((old) => { if (old) URL.revokeObjectURL(old.url); return { url: URL.createObjectURL(file), type: file.type || "" }; });
     setRfq(r); setQuote(null); setAnswers({}); setAnalyzing(true); setStage(1);
     setSelectedLine(r.lines[0]?.id || null);
     // Call 2: catalog matching, compliance and pricing on the extracted lines.
@@ -244,7 +244,8 @@ function App() {
             <Example assistant={<Assistant message={message} />} onNew={openDrop} />
           ) : (<>
           <section className="title-row">
-            <div>
+            {fileUrl && <UploadPreview file={fileUrl} name={fileName || "upload"} />}
+            <div className="title-text">
               <div className="eyebrow"><span className="status-pulse" />{pending ? "ANALYZING" : busy ? busy.toUpperCase() : rfq ? rfq.status.replace(/_/g, " ").toUpperCase() : ""}</div>
               <div className="page-title" role="heading" aria-level={1}>{pending ? "New RFQ" : rfq?.rfq_id} <span>{pending ? pending.name : rfq?.buyer_id}</span></div>
               <div className="subtitle">{pending ? "Uploaded just now · reading the file with the Nicrron AI gateway" : rfq ? `Uploaded ${fileName || "file"} · ${new Date(rfq.created_at).toLocaleString()} · ${rfq.line_count} line items · ${rfq.parser_mode}` : ""}</div>
@@ -436,3 +437,17 @@ function App() {
 }
 
 export default App;
+
+// Preview of the file being quoted: the image itself, the PDF's first page, or a typed file card.
+function UploadPreview({ file, name }: { file: { url: string; type: string; size: number }; name: string }) {
+  const ext = (name.split(".").pop() || "file").toUpperCase().slice(0, 4);
+  const size = file.size >= 1048576 ? `${(file.size / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(file.size / 1024))} KB`;
+  return (
+    <a className="upload-preview" href={file.url} target="_blank" rel="noreferrer" title={`Open ${name} (${size})`}>
+      {file.type.startsWith("image/") ? <img src={file.url} alt={`Uploaded ${name}`} />
+        : file.type === "application/pdf" ? <iframe src={`${file.url}#toolbar=0&navpanes=0&view=FitH`} title={`Uploaded ${name}`} tabIndex={-1} />
+        : <span className="upload-preview-file"><Icon name="document" size={26} /><b>{ext}</b></span>}
+      <span className="upload-preview-size">{size}</span>
+    </a>
+  );
+}
