@@ -56,6 +56,7 @@ export interface RFQ {
 
 export interface Quote {
   id: string; rfq_id: string; status: string; ready_to_send: boolean; currency: string;
+  buyer_id?: string; buyer_email?: string | null;
   grand_total_usd: number; warnings: string[]; created_at: string;
   lines: { line_id: string; sku: string; description: string; quantity: number; unit_price_usd: number; line_total_usd: number; standard: string; certifications: string[] }[];
 }

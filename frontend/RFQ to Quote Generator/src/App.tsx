@@ -3,6 +3,7 @@ import Assistant from "./Assistant";
 import Example from "./Example";
 import Icon, { type IconName } from "./Icon";
 import Reasoning from "./Reasoning";
+import QuoteReport from "./QuoteReport";
 import { api, ApiError, money, type Line, type Quote, type RFQ } from "./api";
 
 const nav = [
@@ -53,7 +54,8 @@ function App() {
   const [pending, setPending] = useState<{ name: string; started: number } | null>(null);  // file being analyzed
   const [elapsed, setElapsed] = useState(0);
   const [stage, setStage] = useState(4);
-  const [analyzing, setAnalyzing] = useState(false);   // between the extract call and the analyze call   // pipeline steps completed (0-4); animates 1 -> 4 after a response
+  const [analyzing, setAnalyzing] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);   // final quote report pop-up   // between the extract call and the analyze call   // pipeline steps completed (0-4); animates 1 -> 4 after a response
   const fileInput = useRef<HTMLInputElement>(null);
   const say = (text: string) => setMessage((m) => ({ id: (m?.id || 0) + 1, text }));
 
@@ -152,6 +154,7 @@ function App() {
   const draft = () => run("Drafting the quote…", async () => {
     const q = await api.draftQuote(rfq!.rfq_id);
     setQuote(q);
+    setReportOpen(true);
     say(`Quote ${q.id} is drafted: ${money(q.grand_total_usd)}. ${q.warnings.join(" ")}`);
   });
 
@@ -260,7 +263,8 @@ function App() {
                 const state = index === 4 ? (stage < 4 ? "waiting" : quote ? "done" : "current")
                   : index < stage ? "done" : index === stage ? "active" : "waiting";
                 return (
-                  <div className={`pipeline-step ${state}`} key={t}>
+                  <div className={`pipeline-step ${state}${index === 4 && quote ? " clickable" : ""}`} key={t}
+                    onClick={index === 4 && quote ? () => setReportOpen(true) : undefined} title={index === 4 && quote ? "Open the quote report" : undefined}>
                     <div className="step-icon">{state === "active" ? <span className="step-spinner" /> : state === "done" ? <Icon name="check" size={16} /> : <Icon name={icon} size={16} />}</div>
                     <div><strong>{t}</strong><span>{state === "waiting" ? "Waiting" : state === "active" ? "Working…" : sub}</span></div>
                     {index < 4 && <div className="connector" />}
@@ -339,7 +343,7 @@ function App() {
                 <button className="primary-button full" onClick={allApproved ? draft : approveReady} disabled={!rfq || !!busy || (!allApproved && !ready.length)}>
                   {allApproved ? (quote ? "Redraft quote" : "Draft quote") : "Approve ready lines"}<Icon name="arrow" size={16} />
                 </button>
-                {quote && <button className="text-button" onClick={() => navigator.clipboard.writeText(JSON.stringify(quote, null, 2)).catch(() => undefined)}>Copy quote JSON</button>}
+                {quote && <button className="text-button" onClick={() => setReportOpen(true)}>Open quote report</button>}
               </div>
 
               {current && (
@@ -384,6 +388,8 @@ function App() {
           </section>
         </div>
       </main>
+
+      {reportOpen && quote && <QuoteReport quote={quote} rfq={rfq} onClose={() => setReportOpen(false)} />}
 
       {dropOpen && (
         <div className="drop-overlay" onClick={() => setDropOpen(false)} role="dialog" aria-modal="true" aria-label="Upload an RFQ">
