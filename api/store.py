@@ -1,6 +1,6 @@
 """Local SQLite persistence with per-tenant record scoping."""
 import json, os, sqlite3
-from ai.engine import sample_catalog
+import database
 
 
 def connection():
@@ -25,7 +25,7 @@ def init():
 
 def load_catalog(tenant):
     with connection() as con:
-        for item in sample_catalog():
+        for item in database.load_catalog():
             con.execute('INSERT OR IGNORE INTO catalog(tenant,sku,payload) VALUES(?,?,?)',
                         (tenant,item['sku'],json.dumps(item)))
         rows=con.execute('SELECT payload FROM catalog WHERE tenant=? ORDER BY sku',(tenant,)).fetchall()
