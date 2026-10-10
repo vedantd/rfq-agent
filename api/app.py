@@ -107,6 +107,7 @@ def create_rfq(
     tid:str,
     idem:str|None=None,
     precomputed:tuple[list[dict],dict]|None=None,
+    defer_analysis:bool=False,
 ):
     if idem:
         previous=store.find_idempotent(tid,idem)
@@ -122,14 +123,20 @@ def create_rfq(
     parser_mode = 'nicrron_live'
     if not lines:
         raise HTTPException(422,'No recognizable material lines found; revise the RFQ text.')
-    catalog=store.load_catalog(tid)
-    lines=[engine.analyze_line(line,catalog) for line in lines]
+    if defer_analysis:
+        # Step 1 only: return the extracted lines now; POST /v1/rfqs/{id}/analyze does match/price/compliance.
+        lines=[{**line,'status':'extracted','approval_status':'pending','blockers':[],'clarifications':[],
+                'match':None,'match_candidates':[],'pricing':None,
+                'compliance':{'status':'not_evaluated','issues':[]}} for line in lines]
+    else:
+        catalog=store.load_catalog(tid)
+        lines=[engine.analyze_line(line,catalog) for line in lines]
     events=[event('rfq.received','RFQ ingested')]
     if body.source_type == 'image':
         events.append(event('rfq.image_extracted',
             f"Multimodal extract via {gateway_details.get('vision_model') or gateway_details.get('model')} "
             f"({gateway_details.get('latency_ms')} ms)"))
-    events.append(event('rfq.analyzed',f'{len(lines)} lines processed using {parser_mode}'))
+    events.append(event('rfq.extracted' if defer_analysis else 'rfq.analyzed',f'{len(lines)} lines {"extracted" if defer_analysis else "processed"} using {parser_mode}'))
     rfq={'id':rid,'tenant_id':tid,'buyer_id':body.buyer_id,'buyer_email':body.buyer_email,
          'source_type':body.source_type,'source_text':body.text,'parser_mode':parser_mode,
          'gateway':gateway_details,
@@ -173,7 +180,9 @@ def ingest_rfq(body:RFQRequest,tid:str=Depends(tenant),idempotency_key:str|None=
 IMAGE_SUFFIXES = ('.png', '.jpg', '.jpeg', '.webp', '.gif')
 
 @app.post('/v1/rfqs/upload',status_code=201,tags=['RFQs'])
-async def ingest_upload(file:UploadFile=File(...),buyer_id:str=Form(...),buyer_email:str|None=Form(None),tid:str=Depends(tenant)):
+async def ingest_upload(file:UploadFile=File(...),buyer_id:str=Form(...),buyer_email:str|None=Form(None),
+                        defer_analysis:bool=Form(False),tid:str=Depends(tenant)):
+    """defer_analysis=true returns right after extraction (step 1); then call POST /v1/rfqs/{id}/analyze."""
     raw=await file.read(5_000_001)
     if len(raw)>5_000_000: raise HTTPException(413,'5MB limit for hackathon demo')
     filename=(file.filename or '').lower()
@@ -213,6 +222,7 @@ async def ingest_upload(file:UploadFile=File(...),buyer_id:str=Form(...),buyer_e
         RFQRequest(buyer_id=buyer_id,buyer_email=buyer_email,text=text,source_type=source),
         tid,
         precomputed=precomputed,
+        defer_analysis=defer_analysis,
     )
 
 @app.get('/v1/rfqs/{rfq_id}',tags=['RFQs'])

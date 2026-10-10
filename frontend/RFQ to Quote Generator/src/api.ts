@@ -3,7 +3,7 @@
 
 export const DEMO_API_KEY = "rudco-demo-key";
 
-export type LineStatus = "ready_for_approval" | "approved" | "needs_clarification" | "needs_review" | "blocked_compliance";
+export type LineStatus = "extracted" | "ready_for_approval" | "approved" | "needs_clarification" | "needs_review" | "blocked_compliance";
 
 export interface Clarification { field: string; question: string }
 
@@ -81,14 +81,16 @@ export const api = {
   health: () => fetch("/health").then((r) => r.json()),
   createRfq: (text: string, buyer_id: string, buyer_email?: string, source_type = "text") =>
     call<RFQ>("POST", "/v1/rfqs", { text, buyer_id, buyer_email: buyer_email || null, source_type }),
-  uploadRfq: (file: File, buyer_id: string, buyer_email?: string) => {
+  uploadRfq: (file: File, buyer_id: string, buyer_email?: string, deferAnalysis = false) => {
     const fd = new FormData();
+    if (deferAnalysis) fd.append("defer_analysis", "true");   // step 1 only: extracted lines
     fd.append("file", file);
     fd.append("buyer_id", buyer_id);
     if (buyer_email) fd.append("buyer_email", buyer_email);
     return call<RFQ>("POST", "/v1/rfqs/upload", undefined, fd);
   },
   getRfq: (id: string) => call<RFQ>("GET", `/v1/rfqs/${id}`),
+  analyze: (id: string) => call<RFQ>("POST", `/v1/rfqs/${id}/analyze`),   // steps 2-4: match, compliance, price
   clarify: (id: string, lineId: string, fields: Record<string, string | number>) => call<Line>("PATCH", `/v1/rfqs/${id}/lines/${lineId}`, fields),
   approve: (id: string, lineId: string) => call<Line>("POST", `/v1/rfqs/${id}/lines/${lineId}/approve`),
   emailDraft: (id: string) => call<{ to: string | null; subject: string; body: string; delivery_status: string }>("GET", `/v1/rfqs/${id}/clarifications/email-draft`),

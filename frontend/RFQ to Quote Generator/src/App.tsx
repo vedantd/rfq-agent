@@ -14,6 +14,7 @@ const nav = [
 ];
 
 const STATUS_LABEL: Record<string, { text: string; cls: string }> = {
+  extracted: { text: "Extracted", cls: "review" },
   ready_for_approval: { text: "Ready", cls: "verified" },
   approved: { text: "Approved", cls: "verified" },
   needs_clarification: { text: "Question", cls: "question" },
@@ -51,7 +52,8 @@ function App() {
   const [dragOver, setDragOver] = useState(false);
   const [pending, setPending] = useState<{ name: string; started: number } | null>(null);  // file being analyzed
   const [elapsed, setElapsed] = useState(0);
-  const [stage, setStage] = useState(4);   // pipeline steps completed (0-4); animates 1 -> 4 after a response
+  const [stage, setStage] = useState(4);
+  const [analyzing, setAnalyzing] = useState(false);   // between the extract call and the analyze call   // pipeline steps completed (0-4); animates 1 -> 4 after a response
   const fileInput = useRef<HTMLInputElement>(null);
   const say = (text: string) => setMessage((m) => ({ id: (m?.id || 0) + 1, text }));
 
@@ -63,10 +65,10 @@ function App() {
     return () => clearInterval(t);
   }, [pending]);
   useEffect(() => {   // after the response: walk the steps, each revealing its real results
-    if (stage >= 4) return;
-    const t = setTimeout(() => setStage((n) => n + 1), 900);
+    if (stage >= 4 || analyzing) return;
+    const t = setTimeout(() => setStage((n) => n + 1), 500);
     return () => clearTimeout(t);
-  }, [stage]);
+  }, [stage, analyzing]);
   useEffect(() => {
     if (!dropOpen) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setDropOpen(false); };
@@ -109,11 +111,16 @@ function App() {
     setPending({ name: file.name, started: Date.now() });   // same page: the pipeline shows progress
     say(`Reading ${file.name}. I will extract every line, match it to the catalog, price it and check compliance.`);
     let r: RFQ;
-    try { r = await api.uploadRfq(file, buyer || "buyer"); }
+    // Call 1: extraction only (the slow LLM step). The lines show as soon as it returns.
+    try { r = await api.uploadRfq(file, buyer || "buyer", undefined, true); }
     finally { setPending(null); }
     setFileName(file.name);
     setFileUrl((old) => { if (old) URL.revokeObjectURL(old.url); return { url: URL.createObjectURL(file), type: file.type || "" }; });
-    setRfq(r); setQuote(null); setAnswers({}); setStage(1);
+    setRfq(r); setQuote(null); setAnswers({}); setAnalyzing(true); setStage(1);
+    setSelectedLine(r.lines[0]?.id || null);
+    // Call 2: catalog matching, compliance and pricing on the extracted lines.
+    try { r = await api.analyze(r.rfq_id); setRfq(r); }
+    finally { setAnalyzing(false); }
     setSelectedLine((r.lines.find((l) => l.clarifications.length) || r.lines[0])?.id || null);
     setActiveTab("Line items");
     announce(r);
