@@ -100,8 +100,62 @@ If your RFQ is different from the example, only exact catalog matches will price
 | `POST` | `/v1/rfqs/{id}/quotes/draft` | Quote JSON, requires all lines approved |
 | `GET` | `/v1/catalog/items` | View supplier catalog |
 | `PUT` | `/v1/catalog/items/{sku}` | Add/update supplied catalog SKU |
+| `GET` | `/v1/catalog/search` | Search catalog by material, grade, form, finish |
+| `GET` | `/v1/catalog/benchmarks` | Retrieve pricing benchmarks |
+| `GET` | `/v1/catalog/compliance-rules` | Retrieve procurement compliance rules |
+| `GET` | `/v1/catalog/gauge-table` | Material-specific gauge-to-thickness mappings |
+| `GET` | `/v1/catalog/tube-gauge` | Tube wall gauge conversion table |
+| `GET` | `/v1/catalog/synonyms` | Term normalization mappings |
+| `GET` | `/v1/catalog/health` | Verify database connectivity and data |
 
 **B2B auth:** `X-API-Key: rudco-demo-key` is a known sample *client-to-QuotePilot* key, NOT the model gateway credential. Two scoped demo tenants are provided; replace keys and use proper key management before deployment.
+
+## RudCo Database Integration
+
+The system is integrated with the **RudCo reference database** (`rudco_demo_data/rudco_demo.db`), which contains:
+
+- **99 stainless steel, galvanized, carbon steel, and aluminum SKUs** with material specs, supplier info, pricing, and lead times
+- **Pricing benchmarks** for market rate validation
+- **Compliance rules** for Buy America, DFARS, MTR, LEED, and country-of-origin requirements
+- **Gauge conversion tables** (material-specific sheet and tube standards)
+- **Term synonyms** for RFQ normalization (e.g., "SS" → "stainless steel", "galv" → "galvanized")
+- **Answer key** with 32 RFQ lines for evaluation and testing
+
+### Database-Powered Features
+
+1. **Full-text catalog search** with material/grade/form/finish filters
+2. **Metric unit conversion** (mm to inches, autodetected during RFQ parsing)
+3. **Gauge resolution** with material-specific accuracy (e.g., 16 ga stainless vs. tube wall vs. carbon steel)
+4. **Compliance checking** - rules are evaluated per-line to detect blockers or warnings
+5. **Pricing validation** - agent quotes are compared against market benchmarks
+6. **Finish-aware matching** - "#4 polish", "2B", "BA" finishes narrow catalog candidates
+
+### Evaluation Suite
+
+Run the evaluation suite to test the agent against 32 known RFQ lines:
+
+```bash
+python tests/eval_suite.py
+```
+
+The suite reports:
+- **Overall accuracy** and per-status breakdowns (MATCH, CLARIFY, NO_MATCH, MATCH_ASSUMPTION)
+- **Failing test cases** with root causes (missing extractions, wrong compliance decisions, pricing errors)
+- **Diagnostic output** showing expected vs. agent results
+
+### Database File Location
+
+The default location is `./rudco_demo_data/rudco_demo.db` relative to the project root. To override, set:
+
+```bash
+export RFQ_DB_PATH=/path/to/rudco_demo.db
+```
+
+Or use the environment variable in `.env`:
+
+```dotenv
+RUDCO_DEMO_DB_PATH=./rudco_demo_data/rudco_demo.db
+```
 
 ### Example
 

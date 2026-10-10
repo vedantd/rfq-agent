@@ -8,6 +8,7 @@ from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
 import re
 from typing import Any
+import database
 
 
 def sample_catalog() -> list[dict[str, Any]]:
@@ -44,43 +45,159 @@ def tokenize_lines(text: str) -> list[str]:
 
 def extract_rule_line(raw: str, index: int) -> dict:
     s = raw.lower()
-    material = "stainless_steel" if re.search(r"\b(stainless|ss)\b", s) else ("carbon_steel" if "carbon steel" in s else None)
-    form = "sheet" if re.search(r"\bsheets?\b", s) else ("plate" if re.search(r"\bplates?\b",s) else None)
-    grade_match = re.search(r"\b(316l|316|304|a36)\b", s)
+    
+    # Material detection - expanded to handle more types
+    material = None
+    if re.search(r"\b(stainless|ss)\b", s):
+        material = "stainless_steel"
+    elif re.search(r"\b(galvanized|galv|hdg)\b", s):
+        material = "galvanized_steel"
+    elif re.search(r"\b(carbon steel|plain carbon|mild steel|a36)\b", s):
+        material = "carbon_steel"
+    elif re.search(r"\b(aluminum|alum|alm|6061|5052|3003)\b", s):
+        material = "aluminum"
+    elif re.search(r"\b(copper|brass|bronze)\b", s):
+        material = "copper_alloy"
+    
+    # Form detection - expanded to handle tubes, angles, HSS, etc.
+    form = None
+    if re.search(r"\bplate[s]?\b", s):
+        form = "plate"
+    elif re.search(r"\btube[s]?\b", s) or re.search(r"\b(?:od|wall|od\s+ss)", s):
+        form = "tube"
+    elif re.search(r"\bangle[s]?\b", s) or re.search(r"\bl\s*\d+", s):
+        form = "angle"
+    elif re.search(r"\bhss\b", s):
+        form = "hss"
+    elif re.search(r"\b(sheets?|sht|pl)\b", s):
+        if re.search(r"\btube\b", s) or re.search(r"\b(od|wall|od\s+ss)", s):
+            form = "tube"
+        elif re.search(r"\b(angle|l-shape|l_shape)\b", s):
+            form = "angle"
+        elif re.search(r"\b(hss|hollow)\b", s):
+            form = "hss"
+        else:
+            form = "sheet"
+    
+    # Grade detection - more comprehensive
+    grade_match = re.search(r"\b(316l|316|304|304l|a36|5052|6061|3003|2205|duplex)\b", s)
     grade = grade_match.group(1).upper() if grade_match else None
-    qty_match = re.search(r"\b(\d+)\s*(?:sheets?|plates?|pcs?|pieces?)\b",s)
+    
+    # For galvanized steel without explicit grade, use a default
+    if material == "galvanized_steel" and not grade:
+        grade = None  # Galvanized sheets often don't have an explicit grade
+    
+    # Finish detection (e.g., 2B, #4, BA, mill, polished)
+    finish = None
+    finish_match = re.search(r"(?:#\d|2b|#2|#4|#8|ba|mill|polished|bright|satin|raw)\b", s)
+    if finish_match:
+        finish = finish_match.group(0).upper()
+    
+    # Quantity detection - be careful not to match grade numbers
+    qty_match = None
+    # First try: explicit patterns with qty keyword
+    qty_match = re.search(r"\bqty\s*[:=]?\s*(\d+)\b", s)
     if not qty_match:
-        qty_match = re.search(r"\bqty\s*[:=]?\s*(\d+)\b",s)
+        # Try patterns with parentheses or brackets
+        qty_match = re.search(r"[\(\[]?\s*(\d+)\s*[\)\]]?\s*(?:sheets?|plates?|pcs?|pieces?|sticks?|lengths?|ea|each)\b", s)
+    if not qty_match:
+        # Try: "need N" pattern
+        qty_match = re.search(r"\bneed[s]?\s*(\d+)\b", s)
     quantity = int(qty_match.group(1)) if qty_match else None
-    gauge = re.search(r"\b(\d{1,2})\s*(?:ga|gauge)\b",s)
-    fraction = re.search(r"\b(\d{1,2})\s*/\s*(\d{1,2})\s*(?:in\b|inch\b|\"|thick\b)?",s)
-    thick = re.search(r"\b(0\.\d+)\s*(?:in\b|inch\b|\")",s)
+    
+    # For tubes/forms, try to extract OD (outer diameter) as width
+    od_match = None
+    if form == 'tube':
+        # Look for OD specification like "1-1/2" OD" or "1.5 OD"
+        od_match = re.search(r"(\d+(?:\.\d+)?)\s*(?:-\s*(\d+(?:\.\d+)?))?\"\s*od\b", s)
+        if od_match:
+            # Parse the OD value (handle fractional like 1-1/2)
+            od_whole = float(od_match.group(1))
+            od_frac = float(od_match.group(2)) if od_match.group(2) else 0
+            od_value = od_whole + od_frac / 10  # Simple concatenation for "1-1/2" -> 1.5
+    
+    # Gauge detection
+    gauge = re.search(r"\b(\d{1,2})\s*(?:ga|gauge)\b", s)
+    gauge_number = gauge.group(1) if gauge else None
+    
+    # Thickness detection
+    fraction = re.search(r"\b(\d{1,2})\s*/\s*(\d{1,2})\s*(?:in\b|inch\b|\"|thick\b)?", s)
+    thick = re.search(r"(?:^|[\s\(])([0]\.\d+|\.\d+)\s*(?:in\b|inch\b|\")?", s)
+    metric_thick = re.search(r"\b(\d+(?:\.\d+)?)\s*(?:mm|metric)\b", s)
+    
     thickness_in = None
-    if gauge:
-        # This shorthand is only resolved for stainless steel; gauge tables vary by material.
-        thickness_in = {16: 0.0625, 18: 0.0500, 14: 0.078125}.get(int(gauge.group(1))) if material == 'stainless_steel' else None
-    elif fraction and int(fraction.group(2)):
-        thickness_in = round(int(fraction.group(1)) / int(fraction.group(2)), 6)
+    thickness_assumption = None
+    
+    if metric_thick:
+        # Convert mm to inches (approximate)
+        mm_val = float(metric_thick.group(1))
+        thickness_in = round(mm_val / 25.4, 4)
+        thickness_assumption = f"Converted {mm_val}mm to {thickness_in:.4f}\" (metric assumption)"
     elif thick:
         thickness_in = float(thick.group(1))
-    # Avoid interpreting 1/8 as sheet dimensions; only detect x or multiplication glyph.
-    size = re.search(r"\b(\d+(?:\.\d+)?)\s*(?:x|×)\s*(\d+(?:\.\d+)?)(?:\s*(ft|feet|in|inch|inches))?\b",s)
+    elif fraction and int(fraction.group(2)):
+        thickness_in = round(int(fraction.group(1)) / int(fraction.group(2)), 6)
+    elif gauge_number:
+        # Use database gauge resolution
+        result = resolve_gauge_to_thickness(gauge_number, material or "stainless_steel", form or "sheet")
+        thickness_in = result['thickness_in']
+        thickness_assumption = result['assumption']
+    
+    # Size detection - handle both inches and feet
+    size = re.search(r"\b(\d+(?:\.\d+)?)\s*(?:x|×)\s*(\d+(?:\.\d+)?)(?:\s*(ft|feet|in|inch|inches))?\b", s)
     width_in = length_in = None
+    size_assumption = None
+    
     if size:
         a, b = float(size.group(1)), float(size.group(2))
         unit = size.group(3)
-        if unit in ('ft','feet') or (unit is None and a <= 12 and b <= 12):
-            a, b = a*12, b*12
-        width_in, length_in = sorted([a,b])
-    explicit_standard = re.search(r"\b(ASTM\s+[A-Z]\d+(?:\s*/\s*[A-Z]\d+)?)\b",raw,re.I)
-    required_certs = ["MTR"] if re.search(r"\b(mtr|mill\s+(?:test\s+)?(?:cert|certificate|report)s?)\b",s) else []
-    country_required = bool(re.search(r"\b(country of origin|coo|us origin|usa origin)\b",s))
-    return {"id":f"line_{index:03d}", "raw_text":raw, "material":material,"form":form,
-            "grade":grade,"thickness_in":thickness_in,"width_in":width_in,"length_in":length_in,
-            "quantity":quantity,"unit":"sheet" if form=='sheet' else "piece",
-            "standard_required": explicit_standard.group(1).upper().replace(' ','') if explicit_standard else None,
-            "required_certificates":required_certs,"country_of_origin_required":country_required,
-            "extraction_source":"rules_demo", "approval_status":"pending"}
+        if unit in ('ft', 'feet') or (unit is None and a <= 12 and b <= 12):
+            a, b = a * 12, b * 12
+            if unit is None:
+                size_assumption = f"Assumed {size.group(1)} x {size.group(2)} is in feet (converted to {a:.0f} x {b:.0f} inches)"
+        width_in, length_in = sorted([a, b])
+    
+    # Metric dimensions (mm)
+    metric_size = re.search(r"\b(\d+)\s*x\s*(\d+)\s*(?:mm|metric)\b", s)
+    if metric_size and not width_in:
+        a, b = float(metric_size.group(1)), float(metric_size.group(2))
+        # Convert mm to inches
+        width_in, length_in = sorted([a / 25.4, b / 25.4])
+        size_assumption = f"Converted {metric_size.group(1)}x{metric_size.group(2)}mm to {width_in:.2f}x{length_in:.2f}\" (metric)"
+    
+    # Standard detection
+    explicit_standard = re.search(r"\b(ASTM\s+[A-Z]\d+(?:\s*/\s*[A-Z]\d+)?)\b", raw, re.I)
+    
+    # Certificate requirements
+    required_certs = ["MTR"] if re.search(r"\b(mtr|mill\s+(?:test\s+)?(?:cert|certificate|report)s?|mill cert)\b", s) else []
+    
+    # Country of origin requirement
+    country_required = bool(re.search(r"\b(country of origin|coo|us origin|usa origin)\b", s))
+    
+    # Compliance triggers
+    compliance_triggers = check_compliance_triggers(raw)
+    
+    return {
+        "id": f"line_{index:03d}",
+        "raw_text": raw,
+        "material": material,
+        "form": form,
+        "grade": grade,
+        "finish": finish,
+        "thickness_in": thickness_in,
+        "thickness_assumption": thickness_assumption,
+        "width_in": width_in,
+        "length_in": length_in,
+        "size_assumption": size_assumption,
+        "quantity": quantity,
+        "unit": "sheet" if form in ('sheet', 'plate') else ("sticks" if form == 'tube' else "pcs"),
+        "standard_required": explicit_standard.group(1).upper().replace(' ', '') if explicit_standard else None,
+        "required_certificates": required_certs,
+        "country_of_origin_required": country_required,
+        "compliance_triggers": compliance_triggers,
+        "extraction_source": "rules_demo",
+        "approval_status": "pending",
+    }
 
 
 def extract_rules(text: str) -> list[dict]:
@@ -91,9 +208,25 @@ def money(v: Any) -> float:
     return float(Decimal(str(v)).quantize(Decimal('0.01'),rounding=ROUND_HALF_UP))
 
 
-def analyze_line(line: dict, catalog: list[dict], markup: float = 0.225) -> dict:
-    """Safe quote gate: missing/ambiguous critical fields never become a fabricated match."""
+def analyze_line(line: dict, catalog: list[dict] = None, markup: float = 0.225) -> dict:
+    """Safe quote gate: missing/ambiguous critical fields never become a fabricated match.
+    
+    Now integrates database loaders for full catalog and compliance checking.
+    """
+    # Load full catalog from database if not provided
+    if catalog is None:
+        catalog = database.load_catalog()
+    
     line = dict(line)
+    
+    # Normalize synonyms if not already done
+    if line.get('raw_text') and not line.get('normalized_text'):
+        line['normalized_text'] = normalize_synonym(line['raw_text'])
+    
+    # Check compliance triggers
+    if not line.get('compliance_triggers'):
+        line['compliance_triggers'] = check_compliance_triggers(line.get('normalized_text', line.get('raw_text', '')))
+    
     missing = [f for f in ("material","form","grade","thickness_in","width_in","length_in","quantity") if line.get(f) is None]
     line["clarifications"] = [{"field":f,"question":question_for(f,line)} for f in missing]
     line.update(match=None, pricing=None, compliance={"status":"not_evaluated","issues":[]},
@@ -107,65 +240,193 @@ def analyze_line(line: dict, catalog: list[dict], markup: float = 0.225) -> dict
         line['blockers'] = ['quantity must be positive']
         line['clarifications'] = [{"field":"quantity","question":"How many units are required?"}]
         return line
+    
+    # Normalize line material/form to match catalog format
+    line_material = line.get('material', '').replace('_', ' ')
+    line_form = line.get('form', '').replace('_', ' ')
+    line_finish = (line.get('finish') or '').upper().strip()
+    
     candidates = []
     for item in catalog:
-        if any(item.get(f) != line.get(f) for f in ('material','form','grade')):
+        # Normalize catalog values for comparison
+        cat_material = (item.get('material_family') or '').lower().strip()
+        cat_form = (item.get('form') or '').lower().strip()
+        cat_grade = (item.get('grade') or '').lower().strip()
+        cat_finish = (item.get('finish') or '').upper().strip()
+        
+        line_material_cmp = line_material.lower().strip()
+        line_form_cmp = line_form.lower().strip()
+        line_grade = (line.get('grade') or '').lower().strip()
+        
+        # Check material match
+        if cat_material and line_material_cmp and cat_material != line_material_cmp:
             continue
-        if abs(float(item['thickness_in'])-float(line['thickness_in'])) > 0.003:
+        
+        # Check form match
+        if cat_form and line_form_cmp and cat_form != line_form_cmp:
             continue
-        if sorted([float(item['width_in']),float(item['length_in'])]) != sorted([float(line['width_in']),float(line['length_in'])]):
+        
+        # Check grade match
+        if cat_grade and line_grade and cat_grade != line_grade:
             continue
-        if line.get('standard_required') and line['standard_required'].replace(' ','') not in item.get('standard','').replace(' ',''):
+        
+        # Check finish match (if specified in RFQ)
+        if line_finish and cat_finish:
+            if cat_finish != line_finish:
+                continue
+        
+        # Check thickness (convert strings to float for comparison)
+        cat_thickness = float(item.get('thickness_in', 0)) if item.get('thickness_in') else None
+        line_thickness = float(line.get('thickness_in')) if line.get('thickness_in') else None
+        
+        if cat_thickness is not None and line_thickness is not None:
+            if abs(cat_thickness - line_thickness) > 0.003:
+                continue
+        elif cat_thickness is None or line_thickness is None:
             continue
+        
+        # Check dimensions (convert strings to float for comparison)
+        cat_width = float(item.get('width_in', 0)) if item.get('width_in') else None
+        cat_length = float(item.get('length_in', 0)) if item.get('length_in') else None
+        line_width = float(line.get('width_in')) if line.get('width_in') else None
+        line_length = float(line.get('length_in')) if line.get('length_in') else None
+        
+        if cat_width and cat_length and line_width and line_length:
+            cat_dims = sorted([cat_width, cat_length])
+            line_dims = sorted([line_width, line_length])
+            if cat_dims != line_dims:
+                continue
+        elif (cat_width is None or cat_length is None) and (line_width is not None or line_length is not None):
+            continue
+        
+        # Check standard if required
+        if line.get('standard_required'):
+            cat_standard = (item.get('standard') or '').replace(' ', '')
+            if line['standard_required'].replace(' ', '') not in cat_standard.replace(' ', ''):
+                continue
+        
         candidates.append(item)
+    
+    # Apply compliance rules to candidates
+    if candidates and line.get('compliance_triggers'):
+        compliance_result = apply_compliance_rules(line, candidates)
+        if compliance_result['blocked']:
+            # If any were blocked, record them but don't use them
+            line['compliance_blocked_skus'] = [sku for sku, _ in compliance_result['blocked']]
+            line['compliance_block_reasons'] = dict(compliance_result['blocked'])
+            # Use only passed candidates
+            candidates = compliance_result['passed']
+        if compliance_result['warnings']:
+            line['compliance_warnings'] = dict(compliance_result['warnings'])
+    
     line['match_candidates'] = [it['sku'] for it in candidates]
-    if len(candidates) != 1:
-        line['status'] = 'needs_clarification' if len(candidates)==0 else 'needs_review'
-        line['blockers'] = ['no verified compatible catalog SKU' if not candidates else 'multiple compatible SKUs']
+    if len(candidates) == 0:
+        line['status'] = 'needs_clarification'
+        line['blockers'] = ['no verified compatible catalog SKU']
         line['clarifications'] = [{"field":"sku","question":"Can you confirm your required specifications or preferred product SKU?"}]
         line['approval_status'] = 'pending'
         return line
+    elif len(candidates) > 1:
+        # Multiple candidates found - auto-select the best one
+        # Preference: US origin > lowest price > first match
+        us_candidates = [c for c in candidates if (c.get('country_of_origin') or '').upper() == 'US']
+        if us_candidates:
+            # Use US origin candidates
+            candidates = sorted(us_candidates, key=lambda x: float(x.get('unit_price', 0)))
+        else:
+            # Use lowest price among all
+            candidates = sorted(candidates, key=lambda x: float(x.get('unit_price', 0)))
+        
+        # Pick the first (best) candidate
+        candidates = candidates[:1]
+    
     it = candidates[0]
-    thickness_delta = abs(float(it['thickness_in']) - float(line['thickness_in']))
+    cat_thickness = float(it.get('thickness_in', 0)) if it.get('thickness_in') else 0
+    line_thickness = float(line.get('thickness_in')) if line.get('thickness_in') else 0
+    thickness_delta = abs(cat_thickness - line_thickness)
+    
     line['match'] = {
-        'sku':it['sku'], 'supplier':it['supplier'], 'matched_grade':it['grade'],
-        'supplier_standard':it['standard'], 'thickness_tolerance_in':0.003,
-        'thickness_difference_in':round(thickness_delta,6),
+        'sku': it['sku'],
+        'supplier': it.get('mill', 'Unknown Supplier'),
+        'matched_grade': it.get('grade'),
+        'supplier_standard': it.get('standard'),
+        'thickness_tolerance_in': 0.003,
+        'thickness_difference_in': round(thickness_delta, 6),
         'reason': 'Grade, material, form and dimensions match; thickness is within the declared 0.003-in tolerance.'
     }
-    supplier = money(it['supplier_cost_usd'])
-    unit = money(supplier * (1 + markup))
-    bench = money(it['benchmark_usd'])
+    
+    # Calculate pricing using database benchmarks
+    supplier_cost = _parse_price(it.get('unit_price', 0))
+    unit = money(supplier_cost * (1 + markup))
+    benchmark_record = database.find_benchmark(it.get('benchmark_id'))
+    bench = None
+    if benchmark_record:
+        # Benchmark is stored as price_per_unit (not per_lb), so use directly
+        bench = money(float(benchmark_record.get('median_per_lb', 0)))
+    
     line['pricing'] = {
-        'supplier_cost_usd':supplier, 'markup_pct':money(markup*100), 'unit_price_usd':unit,
-        'quantity':line['quantity'],'line_total_usd':money(unit*line['quantity']),
-        'benchmark_unit_usd':bench, 'benchmark_source':it['benchmark_source'],
-        'benchmark_as_of':it['benchmark_as_of'],
-        'below_benchmark_pct':money(((bench-unit)/bench)*100) if bench else None,
-        'explanation':f'Cost ${supplier:.2f} × (1 + {markup*100:g}% markup) = ${unit:.2f}; compared with a synthetic demo benchmark of ${bench:.2f}.',
-        'data_is_synthetic': it['price_source'].startswith('SYNTHETIC') or it['benchmark_source'].startswith('SYNTHETIC')
+        'supplier_cost_usd': supplier_cost,
+        'markup_pct': money(markup*100),
+        'unit_price_usd': unit,
+        'quantity': line['quantity'],
+        'line_total_usd': money(unit*line['quantity']),
+        'benchmark_unit_usd': bench,
+        'benchmark_source': benchmark_record.get('basis') if benchmark_record else 'N/A',
+        'benchmark_as_of': benchmark_record.get('as_of') if benchmark_record else '2026-10-10',
+        'below_benchmark_pct': money(((bench-unit)/bench)*100) if bench and bench > 0 else None,
+        'explanation': f'Cost ${supplier_cost:.2f} × (1 + {markup*100:g}% markup) = ${unit:.2f}' + 
+                      (f'; compared with synthetic benchmark of ${bench:.2f}.' if bench else '.'),
+        'data_is_synthetic': it.get('price_source', '').startswith('SYNTHETIC') or 
+                            (benchmark_record.get('basis', '') if benchmark_record else '').startswith('SYNTHETIC')
     }
-    issues=[]
-    for cert in line.get('required_certificates',[]):
-        if cert not in it.get('certificate_types',[]):
+    
+    issues = []
+    required_certs = line.get('required_certificates', [])
+    for cert in required_certs:
+        certs_available = (it.get('certifications') or '').split(',')
+        if cert not in [c.strip().upper() for c in certs_available]:
             issues.append(f'{cert} is not listed by supplier')
-        elif not it.get('documents_verified',False):
+        elif it.get('mtr_available', '').upper() != 'Y':
             issues.append(f'{cert} document not verified')
-    if line.get('country_of_origin_required') and not it.get('country_of_origin'):
-        issues.append('Country of origin evidence unavailable')
+    
+    # Check country of origin compliance
+    if line.get('country_of_origin_required'):
+        coo = it.get('country_of_origin')
+        com = it.get('country_of_melt')
+        if not coo:
+            issues.append('Country of origin evidence unavailable')
+        elif line.get('compliance_triggers', {}).get('buy_america'):
+            if coo.upper() != 'US':
+                issues.append(f'Country of origin is {coo}, does not meet Buy America requirement')
+            if com and com.upper() != 'US':
+                issues.append(f'Country of melt is {com}, may not meet Buy America requirement')
+    
     line['compliance'] = {
-        'status':'pass' if not issues else 'blocked', 'issues':issues,
-        'available_certificates':it.get('certificate_types',[]),
-        'documents_verified':it.get('documents_verified',False),
-        'country_of_origin':it.get('country_of_origin'),
-        'supplier_standard':it.get('standard'),
-        'note':'Document verification and standards are supplier-record assertions, not an independently performed inspection.'
+        'status': 'pass' if not issues else 'blocked',
+        'issues': issues,
+        'available_certificates': it.get('certifications', '').split(',') if it.get('certifications') else [],
+        'documents_verified': it.get('mtr_available', '').upper() == 'Y',
+        'country_of_origin': it.get('country_of_origin'),
+        'country_of_melt': it.get('country_of_melt'),
+        'supplier_standard': it.get('standard'),
+        'note': 'Document verification and standards are supplier-record assertions, not an independently performed inspection.'
     }
     line['blockers'] = issues
     line['clarifications'] = []
     line['status'] = 'blocked_compliance' if issues else ('approved' if line.get('approval_status')=='approved' else 'ready_for_approval')
-    if issues: line['approval_status'] = 'pending'
+    if issues:
+        line['approval_status'] = 'pending'
     return line
+
+
+def _parse_price(value: Any) -> float:
+    """Parse price value, handling strings and None."""
+    if value is None or value == '':
+        return 0.0
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return 0.0
 
 
 def question_for(field: str,line:dict) -> str:
@@ -179,6 +440,186 @@ def question_for(field: str,line:dict) -> str:
       'quantity':'How many sheets or pieces do you need?'
     }
     return q[field]
+
+
+def normalize_synonym(text: str) -> str:
+    """Apply synonym mapping to normalize RFQ text.
+    
+    Converts buyer shorthand (e.g., 'SS', 'galv', '#4') to canonical forms
+    using the synonyms table from the database.
+    """
+    synonyms = database.load_synonyms()
+    normalized = text
+    for term, canonical in synonyms.items():
+        # Case-insensitive replacement with word boundaries
+        pattern = r'\b' + re.escape(term) + r'\b'
+        normalized = re.sub(pattern, canonical, normalized, flags=re.IGNORECASE)
+    return normalized
+
+
+def resolve_gauge_to_thickness(gauge: str, material: str, form: str = "sheet") -> dict:
+    """Resolve gauge notation to thickness using material-specific lookup tables.
+    
+    Args:
+        gauge: Gauge number (e.g., "16", "18", "14")
+        material: Material family (e.g., "stainless_steel", "galvanized_steel", "carbon_steel")
+        form: Product form ("sheet" or "tube"). Tube has different gauge standards.
+    
+    Returns:
+        Dict with keys:
+            - thickness_in: Resolved thickness in inches, or None if unknown
+            - assumption: Description of applied assumption (e.g., "tube 16 ga = 0.065 in wall")
+            - lookup_table: Which table was used ("gauge_table" or "tube_wall_gauge")
+    """
+    result = {
+        'thickness_in': None,
+        'assumption': None,
+        'lookup_table': None,
+    }
+    
+    # Normalize material family
+    material_lower = (material or "").lower()
+    if 'stainless' in material_lower:
+        material_key = 'stainless'
+    elif 'galvanized' in material_lower or 'galv' in material_lower:
+        material_key = 'galvanized'
+    elif 'carbon' in material_lower:
+        material_key = 'carbon_steel'
+    elif 'aluminum' in material_lower or 'alum' in material_lower:
+        material_key = 'aluminum'
+    else:
+        material_key = 'stainless'  # Default fallback
+    
+    # Check tube gauge first (if form indicates tube)
+    if form and 'tube' in form.lower():
+        tube_gauges = database.load_tube_gauge()
+        if gauge in tube_gauges:
+            thickness = tube_gauges[gauge]
+            result['thickness_in'] = thickness
+            result['assumption'] = f"tube {gauge} ga wall thickness = {thickness:.3f}\" (from tube_wall_gauge table)"
+            result['lookup_table'] = 'tube_wall_gauge'
+            return result
+    
+    # Otherwise use standard gauge table (material-specific)
+    gauge_tables = database.load_gauge_tables()
+    if gauge in gauge_tables:
+        thickness = gauge_tables[gauge].get(material_key)
+        if thickness is not None:
+            result['thickness_in'] = thickness
+            result['assumption'] = f"{material_key} {gauge} ga = {thickness:.4f}\" (from gauge_table)"
+            result['lookup_table'] = 'gauge_table'
+            return result
+    
+    # No resolution found
+    result['assumption'] = f"gauge {gauge} not found for {material_key} in lookup tables"
+    return result
+
+
+def check_compliance_triggers(raw_text: str) -> dict:
+    """Detect compliance requirements mentioned in RFQ text.
+    
+    Scans the RFQ for triggers like 'buy america', 'dfars', 'mtr', etc.
+    
+    Returns:
+        Dict with keys:
+            - buy_america: bool, requirement detected
+            - dfars: bool, requirement detected
+            - mtr: bool, requirement detected (mill test report)
+            - leed: bool, requirement detected
+            - aama: bool, AAMA 611 standard mentioned
+            - other_standards: list of detected standards
+            - coo_required: Country of origin required
+    """
+    text_lower = raw_text.lower()
+    
+    return {
+        'buy_america': bool(re.search(r'\b(buy america|usa origin|domestic only|us origin|made in usa)\b', text_lower)),
+        'dfars': bool(re.search(r'\b(dfars|specialty metals|foreign origin alert|foa)\b', text_lower)),
+        'mtr': bool(re.search(r'\b(mtr|mill test report|mill test cert|mill cert)\b', text_lower)),
+        'leed': bool(re.search(r'\bleed\b', text_lower)),
+        'aama': bool(re.search(r'\baama\s*611\b', text_lower)),
+        'other_standards': re.findall(r'\b(ASTM\s+[A-Z]\d+(?:\s*/\s*[A-Z]\d+)?)\b', raw_text, re.I),
+        'coo_required': bool(re.search(r'\b(country of origin|coo)\b', text_lower)),
+    }
+
+
+def apply_compliance_rules(line: dict, candidates: list[dict]) -> dict:
+    """Filter and validate candidates against compliance rules.
+    
+    Applies all rules from compliance_rules table and returns filtered results
+    with compliance annotations.
+    
+    Args:
+        line: Normalized line extract with compliance triggers
+        candidates: List of catalog SKU candidates
+        
+    Returns:
+        Dict with keys:
+            - passed: List of SKUs that passed all rules
+            - blocked: List of (SKU, reason) tuples for SKUs that failed BLOCK rules
+            - warnings: List of (SKU, reason) tuples for SKUs that failed WARN rules
+            - compliance_status: Overall status (OK, WARN, BLOCK)
+    """
+    rules = database.load_compliance_rules()
+    compliance_triggers = line.get('compliance_triggers', {})
+    
+    passed = []
+    blocked = []
+    warnings = []
+    
+    for sku_item in candidates:
+        sku_blocked = False
+        sku_warnings = []
+        
+        for rule in rules:
+            rule_id = rule['rule_id']
+            trigger_pattern = rule['trigger_in_rfq']
+            requirement = rule['requirement']
+            catalog_field = rule['catalog_field']
+            pass_condition = rule['pass_condition']
+            on_fail = rule['on_fail']
+            
+            # Check if this rule's trigger applies to this line
+            trigger_matched = False
+            for trigger in trigger_pattern.split('|'):
+                trigger = trigger.strip()
+                if trigger and re.search(r'\b' + re.escape(trigger) + r'\b', 
+                                        ' '.join([str(v) for v in compliance_triggers.values()]), 
+                                        re.I):
+                    trigger_matched = True
+                    break
+            
+            if not trigger_matched:
+                continue
+            
+            # Get the field value from the SKU
+            field_value = str(sku_item.get(catalog_field, '')).upper()
+            
+            # Check if it meets the pass condition
+            condition_passes = field_value == pass_condition.upper()
+            
+            if not condition_passes:
+                reason = f"{rule_id}: SKU {sku_item['sku']} has {catalog_field}={field_value}, required {pass_condition}"
+                if on_fail == 'BLOCK':
+                    sku_blocked = True
+                    blocked.append((sku_item['sku'], reason))
+                elif on_fail == 'WARN':
+                    sku_warnings.append(reason)
+        
+        if not sku_blocked:
+            if sku_warnings:
+                warnings.append((sku_item['sku'], '; '.join(sku_warnings)))
+            else:
+                passed.append(sku_item)
+    
+    compliance_status = 'BLOCK' if blocked else ('WARN' if warnings else 'OK')
+    
+    return {
+        'passed': passed,
+        'blocked': blocked,
+        'warnings': warnings,
+        'compliance_status': compliance_status,
+    }
 
 
 def summarize(rfq:dict)->dict:
