@@ -2,7 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import Assistant from "./Assistant";
 import Example from "./Example";
 import Icon, { type IconName } from "./Icon";
-import { api, ApiError, money, type Line, type Quote, type RFQ } from "./api";
+import Reasoning from "./Reasoning";
+import QuoteReport from "./QuoteReport";
+import ReviewModal from "./ReviewModal";
+import { api, ApiError, money, type CatalogItem, type Line, type Quote, type RFQ } from "./api";
 
 const nav = [
   { label: "Overview", icon: "grid" as IconName },
@@ -12,12 +15,8 @@ const nav = [
   { label: "Audit log", icon: "shield" as IconName },
 ];
 
-const SAMPLE = `Hi team, please quote the following for Northline Fabrication:
-1) 304 SS sheet 16ga 4x8, qty 24
-2) Stainless sheet 4x8, 10 pcs (architect still finalizing the finish)
-Mill certs required. Thanks!`;
-
 const STATUS_LABEL: Record<string, { text: string; cls: string }> = {
+  extracted: { text: "Extracted", cls: "review" },
   ready_for_approval: { text: "Ready", cls: "verified" },
   approved: { text: "Approved", cls: "verified" },
   needs_clarification: { text: "Question", cls: "question" },
@@ -45,18 +44,49 @@ function App() {
   const [selectedLine, setSelectedLine] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [fileUrl, setFileUrl] = useState<{ url: string; type: string } | null>(null);   // local preview of the upload
-  const [sourceText, setSourceText] = useState(SAMPLE);
   const [buyer, setBuyer] = useState("Northline Fabrication");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [model, setModel] = useState<string>("");
   const [message, setMessage] = useState<{ id: number; text: string } | null>(null);
-  const [composing, setComposing] = useState(false);   // false + no RFQ = Shuang's example screen
+  const [dropOpen, setDropOpen] = useState(false);      // the New RFQ drop window
+  const [dragOver, setDragOver] = useState(false);
+  const [pending, setPending] = useState<{ name: string; started: number } | null>(null);  // file being analyzed
+  const [elapsed, setElapsed] = useState(0);
+  const [stage, setStage] = useState(4);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);   // final quote report pop-up
+  const [reviewOpen, setReviewOpen] = useState(false);   // summary + questions pop-up at Quote ready
+  const [reviewDue, setReviewDue] = useState(false);     // open the review once the pipeline reaches Quote ready
+  const [catalog, setCatalog] = useState<CatalogItem[]>([]);   // answer options for clarifying questions   // between the extract call and the analyze call   // pipeline steps completed (0-4); animates 1 -> 4 after a response
   const fileInput = useRef<HTMLInputElement>(null);
   const say = (text: string) => setMessage((m) => ({ id: (m?.id || 0) + 1, text }));
 
   useEffect(() => { api.health().then((h) => setModel(h?.gateway?.model || "")).catch(() => setModel("")); }, []);
+  useEffect(() => {   // seconds counter while a file is being analyzed
+    if (!pending) return;
+    setElapsed(0);
+    const t = setInterval(() => setElapsed((Date.now() - pending.started) / 1000), 200);
+    return () => clearInterval(t);
+  }, [pending]);
+  useEffect(() => {   // after the response: walk the steps, each revealing its real results
+    if (stage >= 4 || analyzing) return;
+    const t = setTimeout(() => setStage((n) => n + 1), 500);
+    return () => clearTimeout(t);
+  }, [stage, analyzing]);
+  useEffect(() => {   // the pipeline reached Quote ready: let it show green for half a second, then open the summary
+    if (!(stage >= 4 && !analyzing && reviewDue && rfq)) return;
+    const t = setTimeout(() => { setReviewDue(false); setReviewOpen(true); }, 500);
+    return () => clearTimeout(t);
+  }, [stage, analyzing, reviewDue, rfq]);
+  useEffect(() => { if (reviewOpen && !catalog.length) api.catalog().then(setCatalog).catch(() => setCatalog([])); }, [reviewOpen, catalog.length]);
+  useEffect(() => {
+    if (!dropOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setDropOpen(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [dropOpen]);
 
   const lines = rfq?.lines || [];
   const priced = lines.filter((l) => l.pricing);
@@ -88,14 +118,21 @@ function App() {
     setBusy(null);
   }
 
-  const process = (file?: File) => run(file ? `Reading ${file.name}…` : "Reading the RFQ…", async () => {
-    setComposing(true);   // leave the example screen at once so progress and errors are visible
-    const r = file ? await api.uploadRfq(file, buyer || "buyer") : await api.createRfq(sourceText, buyer || "buyer", undefined, "email");
-    if (file) {
-      setFileName(file.name);
-      setFileUrl((old) => { if (old) URL.revokeObjectURL(old.url); return { url: URL.createObjectURL(file), type: file.type || "" }; });
-    } else setFileUrl(null);
-    setRfq(r); setQuote(null); setAnswers({}); setComposing(false);
+  const process = (file: File) => run(`Reading ${file.name}…`, async () => {
+    setDropOpen(false);
+    setPending({ name: file.name, started: Date.now() });   // same page: the pipeline shows progress
+    say(`Reading ${file.name}. I will extract every line, match it to the catalog, price it and check compliance.`);
+    let r: RFQ;
+    // Call 1: extraction only (the slow LLM step). The lines show as soon as it returns.
+    try { r = await api.uploadRfq(file, buyer || "buyer", undefined, true); }
+    finally { setPending(null); }
+    setFileName(file.name);
+    setFileUrl((old) => { if (old) URL.revokeObjectURL(old.url); return { url: URL.createObjectURL(file), type: file.type || "" }; });
+    setRfq(r); setQuote(null); setAnswers({}); setAnalyzing(true); setStage(1);
+    setSelectedLine(r.lines[0]?.id || null);
+    // Call 2: catalog matching, compliance and pricing on the extracted lines.
+    try { r = await api.analyze(r.rfq_id); setRfq(r); setReviewDue(true); }
+    finally { setAnalyzing(false); }
     setSelectedLine((r.lines.find((l) => l.clarifications.length) || r.lines[0])?.id || null);
     setActiveTab("Line items");
     announce(r);
@@ -127,6 +164,8 @@ function App() {
   const draft = () => run("Drafting the quote…", async () => {
     const q = await api.draftQuote(rfq!.rfq_id);
     setQuote(q);
+    setReviewOpen(false);
+    setReportOpen(true);
     say(`Quote ${q.id} is drafted: ${money(q.grand_total_usd)}. ${q.warnings.join(" ")}`);
   });
 
@@ -136,16 +175,20 @@ function App() {
     say("I copied the clarification email to your clipboard. It's a draft only; nothing was sent.");
   });
 
-  const reset = () => { setRfq(null); setQuote(null); setFileName(null); setError(null); setSelectedLine(null); setComposing(true); say("Ready for a new RFQ. Paste it, or drop any file: PDF, photo, spreadsheet, Word or email."); };
+  const openDrop = () => { setError(null); setDragOver(false); setDropOpen(true); };
 
-  const steps: [string, string, IconName, boolean][] = rfq ? [
+  const steps: [string, string, IconName, boolean][] = pending ? [] : rfq ? [
     [rfq.gateway?.vision_model ? "Read image & parse" : "Parse & normalize",
       rfq.gateway?.vision_model
-        ? `Vision ${((rfq.gateway.vision_latency_ms || 0) / 1000).toFixed(1)}s + extract ${((rfq.gateway.extract_latency_ms || 0) / 1000).toFixed(1)}s`
+        ? (rfq.gateway.extract_latency_ms ? `Vision ${((rfq.gateway.vision_latency_ms || 0) / 1000).toFixed(1)}s + extract ${(rfq.gateway.extract_latency_ms / 1000).toFixed(1)}s`
+            : `Read and extracted in one call · ${((rfq.gateway.vision_latency_ms || rfq.gateway.latency_ms || 0) / 1000).toFixed(1)}s`)
         : `${rfq.gateway?.model || rfq.parser_mode}${rfq.gateway?.latency_ms ? ` · ${(rfq.gateway.latency_ms / 1000).toFixed(1)}s` : ""}`, "check", true],
     ["Catalog matching", `${lines.filter((l) => l.match).length} of ${lines.length} matched`, "check", lines.some((l) => l.match)],
     ["Compliance", `${lines.filter((l) => l.compliance.status === "pass").length} pass · ${lines.filter((l) => l.compliance.status === "blocked").length} blocked`, "shield", lines.some((l) => l.compliance.status !== "not_evaluated")],
-    ["Price benchmark", priced.length ? `${priced.length} priced vs benchmark` : "Waiting on matches", "activity", priced.length > 0],
+    ["Price benchmark", priced.length ? (() => {
+        const ctx = priced.find((l) => l.pricing?.market_context)?.pricing?.market_context;
+        return `${priced.length} priced${ctx ? ` · ${ctx.live ? "FRED" : "synthetic"} ${ctx.series_id} · ${ctx.as_of}` : " vs benchmark"}`;
+      })() : "Waiting on matches", "activity", priced.length > 0],
     ["Quote ready", quote ? quote.id : allApproved ? "All lines approved" : `${rfq.approved} of ${rfq.line_count} approved`, "spark", !!quote],
   ] : [];
 
@@ -187,65 +230,80 @@ function App() {
 
       <main className="main">
         <header className="topbar">
-          <div className="breadcrumb"><span>RFQ Inbox</span><Icon name="chevron" size={14} /><strong>{rfq ? rfq.rfq_id : composing ? "New RFQ" : "RFQ-1048"}</strong></div>
+          <div className="breadcrumb"><span>RFQ Inbox</span><Icon name="chevron" size={14} /><strong>{pending ? "New RFQ" : rfq ? rfq.rfq_id : "RFQ-1048"}</strong></div>
           <div className="top-actions">
             <div className="search-box" title={model ? `AI gateway model: ${model}` : "QuotePilot API not reachable"}><Icon name="search" size={16} /><span>Search catalog</span><kbd>⌘ K</kbd></div>
             <button className="icon-button" aria-label="Activity" onClick={() => rfq && setActiveTab("Activity")}><Icon name="activity" /></button>
-            <button className="primary-button" onClick={reset}><Icon name="plus" size={16} />New RFQ</button>
+            <button className="primary-button" onClick={openDrop} disabled={!!pending}><Icon name="plus" size={16} />New RFQ</button>
           </div>
         </header>
 
         <div className="workspace">
-          {error && !rfq && !composing && <div className="api-error" role="alert"><strong>Error</strong> {error}</div>}
-          {!rfq && !composing ? (
-            <Example assistant={<Assistant message={message} />} onNew={reset} />
+          {error && !rfq && !pending && <div className="api-error" role="alert"><strong>Error</strong> {error}</div>}
+          {!rfq && !pending ? (
+            <Example assistant={<Assistant message={message} />} onNew={openDrop} />
           ) : (<>
           <section className="title-row">
             <div>
-              <div className="eyebrow"><span className="status-pulse" />{busy ? busy.toUpperCase() : rfq ? rfq.status.replace(/_/g, " ").toUpperCase() : "WAITING FOR AN RFQ"}</div>
-              <div className="page-title" role="heading" aria-level={1}>{rfq ? rfq.rfq_id : "New RFQ"} <span>{rfq ? rfq.buyer_id : buyer}</span></div>
-              <div className="subtitle">{rfq ? `${fileName ? `Uploaded ${fileName}` : "Pasted text"} · ${new Date(rfq.created_at).toLocaleString()} · ${rfq.line_count} line items · ${rfq.parser_mode}` : "Paste an RFQ below or drop a PDF, spreadsheet, CSV or email."}</div>
+              <div className="eyebrow"><span className="status-pulse" />{pending ? "ANALYZING" : busy ? busy.toUpperCase() : rfq ? rfq.status.replace(/_/g, " ").toUpperCase() : ""}</div>
+              <div className="page-title" role="heading" aria-level={1}>{pending ? "New RFQ" : rfq?.rfq_id} <span>{pending ? pending.name : rfq?.buyer_id}</span></div>
+              <div className="subtitle">{pending ? "Uploaded just now · reading the file with the Nicrron AI gateway" : rfq ? `Uploaded ${fileName || "file"} · ${new Date(rfq.created_at).toLocaleString()} · ${rfq.line_count} line items · ${rfq.parser_mode}` : ""}</div>
             </div>
             <div className="title-actions">
-              {rfq && <button className="secondary-button" onClick={copyEmail} disabled={!!busy || !open.length}><Icon name="download" size={16} />Copy buyer email</button>}
-              {rfq && <button className="primary-button" onClick={allApproved ? draft : approveReady} disabled={!!busy || (!allApproved && !ready.length)}>{allApproved ? "Draft quote" : `Approve ${ready.length} ready line${ready.length === 1 ? "" : "s"}`}<Icon name="arrow" size={16} /></button>}
+              {rfq && !pending && <button className="secondary-button" onClick={copyEmail} disabled={!!busy || !open.length}><Icon name="download" size={16} />Copy buyer email</button>}
+              {rfq && !pending && <button className="primary-button" onClick={allApproved ? draft : approveReady} disabled={!!busy || (!allApproved && !ready.length)}>{allApproved ? "Draft quote" : `Approve ${ready.length} ready line${ready.length === 1 ? "" : "s"}`}<Icon name="arrow" size={16} /></button>}
             </div>
           </section>
 
           {error && <div className="api-error" role="alert"><strong>Error</strong> {error}</div>}
 
-          {rfq && (
-            <section className="pipeline" aria-label="RFQ processing progress">
-              {steps.map(([t, sub, icon, done], index) => (
-                <div className={`pipeline-step ${done && (index === 4 || !steps[index + 1]?.[3]) ? "current" : ""}`} key={t}>
-                  <div className="step-icon"><Icon name={icon} size={16} /></div>
+          {pending && (
+            <section className="pipeline loading" aria-label="RFQ processing progress" aria-busy="true">
+              {([["Parse & normalize", `Reading ${pending.name} · ${elapsed.toFixed(0)}s`, "check"], ["Catalog matching", "Waiting", "check"], ["Compliance", "Waiting", "shield"],
+                 ["Price benchmark", "Waiting", "activity"], ["Quote ready", "Waiting", "spark"]] as [string, string, IconName][]).map(([t, sub, icon], index) => (
+                <div className={`pipeline-step ${index === 0 ? "active" : "waiting"}`} key={t}>
+                  <div className="step-icon">{index === 0 ? <span className="step-spinner" /> : <Icon name={icon} size={16} />}</div>
                   <div><strong>{t}</strong><span>{sub}</span></div>
                   {index < 4 && <div className="connector" />}
                 </div>
               ))}
+              <div className="pipeline-progress" />
             </section>
           )}
+          {rfq && !pending && (
+            <section className="pipeline" aria-label="RFQ processing progress">
+              {steps.map(([t, sub, icon], index) => {
+                // Quote ready waits until the other four steps are done; then green, or a dark check once a quote is drafted.
+                const state = index === 4 ? (stage < 4 ? "waiting" : quote ? "done" : "current")
+                  : index < stage ? "done" : index === stage ? "active" : "waiting";
+                return (
+                  <div className={`pipeline-step ${state}${index === 4 && stage >= 4 ? " clickable" : ""}`} key={t}
+                    onClick={index === 4 && stage >= 4 ? () => (quote ? setReportOpen(true) : setReviewOpen(true)) : undefined}
+                    title={index === 4 && stage >= 4 ? (quote ? "Open the quote report" : "Open the summary") : undefined}>
+                    <div className="step-icon">{state === "active" ? <span className="step-spinner" /> : state === "done" ? <Icon name="check" size={16} /> : <Icon name={icon} size={16} />}</div>
+                    <div><strong>{t}</strong><span>{state === "waiting" ? "Waiting" : state === "active" ? "Working…" : sub}</span></div>
+                    {index < 4 && <div className="connector" />}
+                  </div>
+                );
+              })}
+              {stage < 4 && <div className="pipeline-progress" />}
+            </section>
+          )}
+          {(pending || rfq) && <Reasoning rfq={pending ? null : rfq} stage={stage} pending={pending} elapsed={elapsed} model={model} />}
 
           <div className="content-grid">
             <section className="work-panel">
               <div className="tabs">
                 {["Line items", "Source document", "Activity"].map((tab) => (
                   <button className={activeTab === tab ? "active" : ""} onClick={() => setActiveTab(tab)} key={tab}>
-                    {tab}{tab === "Line items" && rfq && <span>{rfq.line_count}</span>}
+                    {tab}{tab === "Line items" && rfq && !pending && <span>{rfq.line_count}</span>}
                   </button>
                 ))}
               </div>
 
-              {!rfq ? (
-                <div className="intake">
-                  <label htmlFor="buyer">Buyer</label>
-                  <input id="buyer" value={buyer} onChange={(e) => setBuyer(e.target.value)} />
-                  <label htmlFor="raw-rfq">RFQ text</label>
-                  <textarea id="raw-rfq" rows={8} value={sourceText} onChange={(e) => setSourceText(e.target.value)} />
-                  <div className="intake-actions">
-                    <span>{busy ? `${busy} This takes 5–20 seconds.` : "Runs live extraction through the Nicrron gateway, then catalog, pricing and compliance."}</span>
-                    <button className="primary-button" onClick={() => process()} disabled={!!busy || sourceText.trim().length < 4}><Icon name="spark" size={15} />Process RFQ</button>
-                  </div>
+              {pending || !rfq ? (
+                <div className="skeleton-list" aria-hidden="true">
+                  {[0, 1, 2].map((i) => <div className="skeleton-row" key={i}><span /><span /><span /><span /></div>)}
                 </div>
               ) : activeTab === "Line items" ? (
                 <>
@@ -275,7 +333,6 @@ function App() {
                 <div className="document-preview">
                   <div className="file-card"><Icon name="document" size={30} /><div><strong>{fileName || "Pasted RFQ text"}</strong><span>{rfq.gateway?.vision_model ? `Image read by ${rfq.gateway.vision_model}` : rfq.parser_mode}</span></div>
                     {fileUrl && <a className="secondary-button" href={fileUrl.url} target="_blank" rel="noreferrer">Open document</a>}</div>
-                  {!fileName && <pre className="source-text">{sourceText}</pre>}
                   {fileUrl?.type.startsWith("image/") && <img className="source-image" src={fileUrl.url} alt={`Uploaded RFQ ${fileName}`} />}
                   {fileUrl?.type === "application/pdf" && <iframe className="source-pdf" src={fileUrl.url} title={`Uploaded RFQ ${fileName}`} />}
                 </div>
@@ -301,7 +358,7 @@ function App() {
                 <button className="primary-button full" onClick={allApproved ? draft : approveReady} disabled={!rfq || !!busy || (!allApproved && !ready.length)}>
                   {allApproved ? (quote ? "Redraft quote" : "Draft quote") : "Approve ready lines"}<Icon name="arrow" size={16} />
                 </button>
-                {quote && <button className="text-button" onClick={() => navigator.clipboard.writeText(JSON.stringify(quote, null, 2)).catch(() => undefined)}>Copy quote JSON</button>}
+                {quote && <button className="text-button" onClick={() => setReportOpen(true)}>Open quote report</button>}
               </div>
 
               {current && (
@@ -309,7 +366,15 @@ function App() {
                   <div className="card-title"><div><Icon name="spark" size={17} />{current.clarifications.length || current.blockers.length ? "Needs your attention" : "Line detail"}</div><span>{open.length}</span></div>
                   <div className="attention-content">
                     <div className="attention-head"><span className="amber-icon"><Icon name="clock" size={15} /></span><div><strong>{current.raw_text}</strong><span>{current.id} · {(STATUS_LABEL[current.status] || { text: current.status }).text}</span></div></div>
-                    {current.pricing && <p>{current.pricing.explanation}{current.pricing.below_benchmark_pct != null ? ` ${current.pricing.below_benchmark_pct}% below benchmark.` : ""}</p>}
+                    {current.pricing && <p>{current.pricing.explanation.replace(/ Market context:.*$/, "")}{current.pricing.below_benchmark_pct != null ? ` ${current.pricing.below_benchmark_pct}% below benchmark.` : ""}</p>}
+                    {(() => {
+                      const mc = current.pricing?.market_context || current.market_context;
+                      return mc && (
+                        <p className="market-cite"><strong>{mc.live ? "Live market" : "Synthetic index"} for line {Number(current.id.replace(/\D/g, "")) || current.id}:</strong>{" "}
+                          {mc.driver ? `${mc.driver}. ` : ""}
+                          {mc.source_url ? <a href={mc.source_url} target="_blank" rel="noreferrer">{mc.citation}</a> : mc.citation}</p>
+                      );
+                    })()}
                     {current.compliance.issues.length > 0 && <p className="issue">{current.compliance.issues.join(" · ")}</p>}
                     {current.clarifications.map((c) => (
                       <div className="question-box" key={c.field}>
@@ -341,11 +406,31 @@ function App() {
           <section className="upload-strip" onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) process(f); }}>
             <input ref={fileInput} type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.gif,.xlsx,.csv,.eml,.txt" onChange={(e) => { const f = e.target.files?.[0]; if (f) process(f); e.target.value = ""; }} />
             <div className="upload-icon"><Icon name="upload" size={17} /></div>
-            <div><strong>{rfq ? "Have another RFQ?" : composing ? "Or upload a file" : "Have another RFQ?"}</strong><span>Drop a PDF, photo or screenshot (PNG/JPG/WebP/GIF), spreadsheet, CSV or email here</span></div>
-            <button className="secondary-button" onClick={() => fileInput.current?.click()} disabled={!!busy}>Browse files</button>
+            <div><strong>Have another RFQ?</strong><span>Drop a PDF, photo or screenshot (PNG/JPG/WebP/GIF), spreadsheet, CSV or email here</span></div>
+            <button className="secondary-button" onClick={() => fileInput.current?.click()} disabled={!!pending}>Browse files</button>
           </section>
         </div>
       </main>
+
+      {reviewOpen && rfq && !reportOpen && (
+        <ReviewModal rfq={rfq} fileName={fileName} busy={busy} answers={answers} catalog={catalog}
+          setAnswer={(k, v) => setAnswers((a) => ({ ...a, [k]: v }))} answerable={CLARIFY_FIELDS} numeric={NUMERIC}
+          onApply={submitAnswers} onApprove={approveReady} onDraft={draft} onCopyEmail={copyEmail} onClose={() => setReviewOpen(false)} />
+      )}
+      {reportOpen && quote && <QuoteReport quote={quote} rfq={rfq} onClose={() => setReportOpen(false)} />}
+
+      {dropOpen && (
+        <div className="drop-overlay" onClick={() => setDropOpen(false)} role="dialog" aria-modal="true" aria-label="Upload an RFQ">
+          <label className={`drop-window ${dragOver ? "over" : ""}`} onClick={(e) => e.stopPropagation()}
+            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }} onDragLeave={() => setDragOver(false)}
+            onDrop={(e) => { e.preventDefault(); setDragOver(false); const f = e.dataTransfer.files[0]; if (f) process(f); }}>
+            <input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.gif,.xlsx,.csv,.eml,.txt" autoFocus
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) process(f); e.target.value = ""; }} />
+            <Icon name="upload" size={30} />
+            <strong>Drop a file or click to browse</strong>
+          </label>
+        </div>
+      )}
     </div>
   );
 }

@@ -3,7 +3,7 @@
 
 export const DEMO_API_KEY = "rudco-demo-key";
 
-export type LineStatus = "ready_for_approval" | "approved" | "needs_clarification" | "needs_review" | "blocked_compliance";
+export type LineStatus = "extracted" | "ready_for_approval" | "approved" | "needs_clarification" | "needs_review" | "blocked_compliance";
 
 export interface Clarification { field: string; question: string }
 
@@ -24,14 +24,22 @@ export interface Line {
   required_certificates?: string[];
   blockers: string[];
   clarifications: Clarification[];
+  market_context?: MarketContext | null;   // commodity index that drives this line's price (priced or not)
   match: null | { sku: string; supplier: string; matched_grade: string; supplier_standard: string; reason: string };
   match_candidates?: string[];
   pricing: null | {
     supplier_cost_usd: number; markup_pct: number; unit_price_usd: number; quantity: number; line_total_usd: number;
     benchmark_unit_usd: number; benchmark_source: string; benchmark_as_of: string; below_benchmark_pct: number | null;
     explanation: string; data_is_synthetic: boolean;
+    benchmark_basis?: "per_unit" | "per_lb"; unit_price_per_lb?: number | null; benchmark_per_lb?: number | null;
+    market_context?: MarketContext | null;
   };
   compliance: { status: string; issues: string[]; available_certificates?: string[]; country_of_origin?: string | null; supplier_standard?: string; note?: string };
+}
+
+export interface MarketContext {
+  series_id: string; name: string; value: number; unit?: string | null; as_of?: string | null;
+  live: boolean; source?: string | null; source_url?: string | null; driver?: string; applies_to?: string; citation: string;
 }
 
 export interface RFQ {
@@ -56,8 +64,15 @@ export interface RFQ {
 
 export interface Quote {
   id: string; rfq_id: string; status: string; ready_to_send: boolean; currency: string;
+  buyer_id?: string; buyer_email?: string | null;
   grand_total_usd: number; warnings: string[]; created_at: string;
   lines: { line_id: string; sku: string; description: string; quantity: number; unit_price_usd: number; line_total_usd: number; standard: string; certifications: string[] }[];
+}
+
+export interface CatalogItem {
+  sku: string; material?: string | null; material_family?: string | null; form?: string | null; shape?: string | null;
+  grade?: string | null; thickness_in?: number | string | null; gauge?: string | number | null;
+  width_in?: number | string | null; length_in?: number | string | null; finish?: string | null;
 }
 
 export class ApiError extends Error {
@@ -81,17 +96,21 @@ export const api = {
   health: () => fetch("/health").then((r) => r.json()),
   createRfq: (text: string, buyer_id: string, buyer_email?: string, source_type = "text") =>
     call<RFQ>("POST", "/v1/rfqs", { text, buyer_id, buyer_email: buyer_email || null, source_type }),
-  uploadRfq: (file: File, buyer_id: string, buyer_email?: string) => {
+  uploadRfq: (file: File, buyer_id: string, buyer_email?: string, deferAnalysis = false) => {
     const fd = new FormData();
+    if (deferAnalysis) fd.append("defer_analysis", "true");   // step 1 only: extracted lines
     fd.append("file", file);
     fd.append("buyer_id", buyer_id);
     if (buyer_email) fd.append("buyer_email", buyer_email);
     return call<RFQ>("POST", "/v1/rfqs/upload", undefined, fd);
   },
   getRfq: (id: string) => call<RFQ>("GET", `/v1/rfqs/${id}`),
+  analyze: (id: string) => call<RFQ>("POST", `/v1/rfqs/${id}/analyze`),   // steps 2-4: match, compliance, price
   clarify: (id: string, lineId: string, fields: Record<string, string | number>) => call<Line>("PATCH", `/v1/rfqs/${id}/lines/${lineId}`, fields),
   approve: (id: string, lineId: string) => call<Line>("POST", `/v1/rfqs/${id}/lines/${lineId}/approve`),
   emailDraft: (id: string) => call<{ to: string | null; subject: string; body: string; delivery_status: string }>("GET", `/v1/rfqs/${id}/clarifications/email-draft`),
+  marketIndices: () => call<{ mode: string; fred_configured: boolean; note: string; indices: MarketContext[] }>("GET", "/v1/market/indices"),
+  catalog: () => call<{ items: CatalogItem[] }>("GET", "/v1/catalog/items").then((r) => r.items),
   draftQuote: (id: string) => call<Quote>("POST", `/v1/rfqs/${id}/quotes/draft`),
 };
 
