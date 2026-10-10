@@ -256,8 +256,9 @@ function App() {
           {rfq && !pending && (
             <section className="pipeline" aria-label="RFQ processing progress">
               {steps.map(([t, sub, icon], index) => {
-                const state = index < stage ? (index === 4 && !quote ? "current" : "done")
-                  : index === stage && index < 4 ? "active" : index === 4 ? (quote ? "done" : "current") : "waiting";
+                // Quote ready waits until the other four steps are done; then green, or a dark check once a quote is drafted.
+                const state = index === 4 ? (stage < 4 ? "waiting" : quote ? "done" : "current")
+                  : index < stage ? "done" : index === stage ? "active" : "waiting";
                 return (
                   <div className={`pipeline-step ${state}`} key={t}>
                     <div className="step-icon">{state === "active" ? <span className="step-spinner" /> : state === "done" ? <Icon name="check" size={16} /> : <Icon name={icon} size={16} />}</div>
