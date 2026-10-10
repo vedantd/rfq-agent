@@ -1,0 +1,92 @@
+{
+ "width": 1024,
+ "height": 1024,
+ "regions": {
+  "mouth": [
+   405,
+   438,
+   605,
+   588
+  ],
+  "eyes": [
+   360,
+   296,
+   660,
+   382
+  ],
+  "face": [
+   330,
+   260,
+   690,
+   600
+  ]
+ },
+ "patches": {
+  "talk.half": {
+   "src": "patches/talk.half.png",
+   "box": [
+    405,
+    438,
+    605,
+    588
+   ],
+   "region": "mouth",
+   "from": "talk.half_0.png"
+  },
+  "talk.aa": {
+   "src": "patches/talk.aa.png",
+   "box": [
+    405,
+    438,
+    605,
+    588
+   ],
+   "region": "mouth",
+   "from": "talk.aa_1.png"
+  },
+  "talk.ee": {
+   "src": "patches/talk.ee.png",
+   "box": [
+    405,
+    438,
+    605,
+    588
+   ],
+   "region": "mouth",
+   "from": "talk.ee_1.png"
+  },
+  "talk.oh": {
+   "src": "patches/talk.oh.png",
+   "box": [
+    405,
+    438,
+    605,
+    588
+   ],
+   "region": "mouth",
+   "from": "talk.oh_0.png"
+  },
+  "talk.ou": {
+   "src": "patches/talk.ou.png",
+   "box": [
+    405,
+    438,
+    605,
+    588
+   ],
+   "region": "mouth",
+   "from": "talk.ou_1.png"
+  },
+  "blink": {
+   "src": "patches/blink.png",
+   "box": [
+    360,
+    296,
+    660,
+    382
+   ],
+   "region": "eyes",
+   "from": "blink_0.png"
+  }
+ }
+}

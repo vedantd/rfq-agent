@@ -36,6 +36,16 @@ h1 { font: 700 22px var(--display); margin: 0; letter-spacing: -.01em; }
 .avatar-slot .face { width: 44px; height: 44px; border-radius: 50%; background: var(--steel); display: grid; place-items: center; font: 700 16px var(--display); color: var(--accent); flex: none; }
 .avatar-slot b { display: block; }
 .avatar-slot span { color: var(--muted); font-size: 12px; }
+.avatar-slot { align-items: flex-end; }
+.portrait { position: relative; width: 168px; aspect-ratio: 1; border-radius: 10px; overflow: hidden; flex: none; background: #d4d4d4; }
+.stage { position: absolute; transform-origin: 50% 80%; animation: breathe 4.6s ease-in-out infinite; }
+.stage img { position: absolute; display: block; user-select: none; pointer-events: none; }
+.stage img.patch { visibility: hidden; }
+.stage img.patch.on { visibility: visible; }
+.avatar-slot .ai-tag { position: absolute; left: 6px; bottom: 6px; font: 600 10px var(--mono); background: rgba(0,0,0,.55); color: #fff; padding: 1px 6px; border-radius: 4px; }
+.avatar-slot .who .state { display: block; margin-top: 4px; font: 12px var(--mono); color: var(--accent); }
+@keyframes breathe { 0%, 100% { transform: translateY(0) scale(1); } 50% { transform: translateY(-0.6%) scale(1.006); } }
+@media (prefers-reduced-motion: reduce) { .stage { animation: none; } }
 .feed { flex: 1; min-height: 0; overflow-y: auto; background: var(--panel); border: 1px solid var(--line); padding: 12px; display: flex; flex-direction: column; gap: 10px; }
 .msg { max-width: 92%; padding: 8px 11px; border-radius: 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .msg.agent { background: var(--steel); align-self: flex-start; }
@@ -148,10 +158,75 @@ async function api(method, path, body, isForm) {
   return data;
 }
 
-function say(text, who = "agent") {
-  const m = el("div", "msg " + who, text);
+// ---------- avatar: base portrait + aligned patches; the mouth follows the text as it is revealed ----------
+const avatar = { ready: false, patches: {}, mouth: null, queue: Promise.resolve() };
+const VOWEL = { a: "talk.aa", e: "talk.ee", i: "talk.ee", y: "talk.ee", o: "talk.oh", u: "talk.ou", w: "talk.ou" };
+const CPS = 38, HOLD = 80;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function initAvatar() {
+  let man;
+  try { const r = await fetch("/avatar/manifest.json"); if (!r.ok) return; man = await r.json(); } catch { return; }
+  const VIEW = man.view || [230, 150, 790, 710];           // part of the base shown in the portrait
+  const vw = VIEW[2] - VIEW[0], pct = (v) => (v / vw * 100) + "%";
+  const slot = $("#avatarSlot");
+  const portrait = el("div", "portrait"), stage = el("div", "stage");
+  Object.assign(stage.style, { width: pct(man.width), height: pct(man.height), left: pct(-VIEW[0]), top: pct(-VIEW[1]) });
+  const base = el("img"); base.src = "/avatar/base.webp"; base.alt = "";
+  Object.assign(base.style, { left: 0, top: 0, width: "100%", height: "100%" });
+  stage.append(base);
+  for (const [name, p] of Object.entries(man.patches)) {
+    const im = el("img", "patch"); im.src = "/avatar/" + p.src; im.alt = "";
+    const [x0, y0, x1, y1] = p.box;
+    Object.assign(im.style, { left: x0 / man.width * 100 + "%", top: y0 / man.height * 100 + "%",
+      width: (x1 - x0) / man.width * 100 + "%", height: (y1 - y0) / man.height * 100 + "%" });
+    stage.append(im); avatar.patches[name] = im;
+  }
+  portrait.append(stage, el("span", "ai-tag", "AI avatar"));
+  slot.querySelector(".face").replaceWith(portrait);
+  const who = slot.querySelector("div:last-child"); who.classList.add("who");
+  avatar.state = el("span", "state", "listening"); who.append(avatar.state);
+  avatar.ready = true;
+  (function blinkLoop() {
+    setTimeout(() => { setPatch("blink", true); setTimeout(() => { setPatch("blink", false); blinkLoop(); }, 130); }, 2500 + Math.random() * 3500);
+  })();
+}
+function setPatch(name, on) { const p = avatar.patches[name]; if (p) p.classList.toggle("on", on); }
+function setMouth(name) {
+  if (avatar.mouth === name) return;
+  if (avatar.mouth) setPatch(avatar.mouth, false);
+  avatar.mouth = name;
+  if (name) setPatch(name, true);
+}
+
+async function reveal(node, text) {
+  if (!avatar.ready || matchMedia("(prefers-reduced-motion: reduce)").matches) { node.textContent = text; return; }
+  avatar.state.textContent = "speaking";
+  node.textContent = "";
+  let last = 0;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i], lc = ch.toLowerCase(), now = performance.now();
+    node.textContent += ch;
+    if (/[.!?:]/.test(ch)) { setMouth(null); await sleep(260); continue; }
+    if (/[,;\n]/.test(ch)) { setMouth(null); await sleep(140); continue; }
+    if (now - last > HOLD) {
+      setMouth(ch === " " ? null : VOWEL[lc] || (/[a-z0-9$]/.test(lc) ? "talk.half" : null));
+      last = now;
+    }
+    if (i % 4 === 0) $("#feed").scrollTop = $("#feed").scrollHeight;
+    await sleep(1000 / CPS);
+  }
+  setMouth(null);
+  avatar.state.textContent = "listening";
+}
+
+function say(text, who = "agent", instant = false) {
+  const m = el("div", "msg " + who, who === "agent" && !instant ? "" : text);
   $("#feed").append(m);
   $("#feed").scrollTop = $("#feed").scrollHeight;
+  if (who === "agent" && !instant) {
+    m._done = avatar.queue = avatar.queue.then(() => reveal(m, text)).then(() => { $("#feed").scrollTop = $("#feed").scrollHeight; });
+  } else m._done = Promise.resolve();
   return m;
 }
 
@@ -176,13 +251,13 @@ function announce(r) {
   if (s.blocked) text += ` ${s.blocked} fail a compliance rule.`;
   const qs = openQuestions();
   const m = say(qs.length ? text + ` Before I quote the rest I need ${qs.length} answer${qs.length > 1 ? "s" : ""}:` : text + " Nothing is unclear, so you can generate the quote.");
-  for (const l of qs) m.append(el("span", "q", l.question));
+  m._done.then(() => { for (const l of qs) m.append(el("span", "q", l.question)); $("#feed").scrollTop = $("#feed").scrollHeight; });
 }
 
 async function startRFQ(fn, label) {
   setBusy(true);
   say(label, "me");
-  const thinking = say("Reading the RFQ…");
+  const thinking = say("Reading the RFQ…", "agent", true);
   try {
     rfq = await fn(); quote = null; open.clear();
     thinking.remove();
@@ -383,6 +458,7 @@ $("#file").addEventListener("change", () => {
 });
 
 (async () => {
+  await initAvatar();
   try {
     const h = await api("GET", "/v1/health");
     $("#health").textContent = `backend ok · LLM: ${h.llm.active === "rules" ? "rules only" : h.llm.model} · PRISM: ${h.prism.enabled ? "on" : "local log"}`;

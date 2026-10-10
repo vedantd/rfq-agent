@@ -8,6 +8,7 @@ from typing import Any
 from fastapi import Body, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 from pydantic import BaseModel, Field
 
@@ -37,6 +38,10 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 def desk():
     """The RFQ Desk test UI."""
     return FileResponse(STATIC / "index.html")
+
+
+(STATIC / "avatar").mkdir(exist_ok=True)
+app.mount("/avatar", StaticFiles(directory=STATIC / "avatar"), name="avatar")
 
 
 @app.exception_handler(PipelineError)
