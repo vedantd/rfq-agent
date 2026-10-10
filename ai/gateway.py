@@ -1,5 +1,6 @@
 """Real Nicrron gateway calls. No fake responses or rules-only runtime fallback."""
 from __future__ import annotations
+import base64
 import json
 import os
 import re
@@ -12,6 +13,7 @@ from ai.engine import extract_rule_line
 
 DEFAULT_BASE_URL = "https://api.nicrron.ai/v1"
 DEFAULT_MODEL = "nicrron/auto"
+DEFAULT_VISION_MODEL = "anthropic/claude-haiku-4-5"
 
 SYSTEM_PROMPT = """You extract line items from an industrial buyer RFQ.
 Return a valid JSON object with one top-level key: "lines" (an array).
@@ -34,6 +36,12 @@ Never fill a missing value from your own assumptions or from typical industry sp
 Never invent ASTM standards, quotes, prices, supplier inventory, certificates or customer names.
 Never invent extra line items. Split each separately requested product into its own line.
 Missing values must be JSON null. Do not include markdown fences, commentary or trailing commas.
+"""
+
+IMAGE_TRANSCRIBE_PROMPT = """Transcribe all readable text from this industrial RFQ image or screenshot.
+Return ONLY the plain text that is visibly present. Preserve line breaks where helpful.
+Do not invent, correct, or complete missing text. Do not add commentary or markdown.
+If there is no readable text, reply with exactly: EMPTY
 """
 
 
@@ -68,6 +76,7 @@ def config() -> dict:
         "configured": bool(os.getenv("NICRRON_API_KEY", "").strip()),
         "base_url": os.getenv("NICRRON_BASE_URL", DEFAULT_BASE_URL),
         "model": os.getenv("NICRRON_MODEL", DEFAULT_MODEL),
+        "vision_model": os.getenv("NICRRON_VISION_MODEL", DEFAULT_VISION_MODEL),
     }
 
 
@@ -81,9 +90,26 @@ def gateway_auth() -> tuple[str,str]:
     return base, api_key
 
 
-def _completion(messages: list[dict[str,str]], *, max_tokens: int = 2200) -> tuple[str, str, int]:
+def sniff_image_mime(raw: bytes) -> str | None:
+    if raw.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if len(raw) >= 3 and raw[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if raw.startswith(b"GIF87a") or raw.startswith(b"GIF89a"):
+        return "image/gif"
+    if len(raw) >= 12 and raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
+def _completion(
+    messages: list[dict[str, Any]],
+    *,
+    max_tokens: int = 2200,
+    model: str | None = None,
+) -> tuple[str, str, int]:
     base, api_key = gateway_auth()
-    model = os.getenv("NICRRON_MODEL", DEFAULT_MODEL)
+    resolved_model = model or os.getenv("NICRRON_MODEL", DEFAULT_MODEL)
     start = time.monotonic()
     try:
         # This executes a REAL HTTPS request to the Nicrron API gateway.
@@ -93,7 +119,7 @@ def _completion(messages: list[dict[str,str]], *, max_tokens: int = 2200) -> tup
                 base + "/chat/completions",
                 headers={"Authorization": "Bearer " + api_key,
                          "Content-Type": "application/json"},
-                json={"model": model, "messages": messages, "max_tokens": max_tokens},
+                json={"model": resolved_model, "messages": messages, "max_tokens": max_tokens},
             )
             if response.status_code >= 400:
                 raise GatewayResponseError(
@@ -105,12 +131,42 @@ def _completion(messages: list[dict[str,str]], *, max_tokens: int = 2200) -> tup
     elapsed = round((time.monotonic() - start) * 1000)
     try:
         content = payload['choices'][0]['message']['content']
-        real_model = payload.get('model') or model
+        real_model = payload.get('model') or resolved_model
     except (KeyError, IndexError, TypeError) as exc:
         raise GatewayResponseError("Gateway response missing choices[0].message.content") from exc
     if not isinstance(content, str) or not content.strip():
         raise GatewayResponseError("Gateway returned no assistant text")
     return content, real_model, elapsed
+
+
+def transcribe_image(image_bytes: bytes, mime: str) -> tuple[str, dict[str, Any]]:
+    """Send image bytes to a vision-capable Nicrron model; return plain-text transcript + meta."""
+    if mime not in ("image/png", "image/jpeg", "image/webp", "image/gif"):
+        raise GatewayResponseError(f"Unsupported image MIME type for vision: {mime}")
+    vision_model = os.getenv("NICRRON_VISION_MODEL", DEFAULT_VISION_MODEL)
+    data_url = f"data:{mime};base64," + base64.b64encode(image_bytes).decode("ascii")
+    content, model, latency_ms = _completion(
+        [
+            {"role": "system", "content": IMAGE_TRANSCRIBE_PROMPT},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Transcribe the RFQ text in this image."},
+                    {"type": "image_url", "image_url": {"url": data_url}},
+                ],
+            },
+        ],
+        max_tokens=2000,
+        model=vision_model,
+    )
+    text = content.strip()
+    if text.upper() == "EMPTY" or not text:
+        raise GatewayResponseError("Vision model found no readable text in the image")
+    return text, {
+        "vision_model": model,
+        "vision_latency_ms": latency_ms,
+        "source": "image_transcript",
+    }
 
 def test_connection() -> dict:
     response, model, latency = _completion([

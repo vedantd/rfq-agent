@@ -17,7 +17,10 @@ from fastapi.responses import HTMLResponse
 import httpx
 from ai import engine
 from api import store
-from ai.gateway import extract_live, test_connection, config, GatewayConfigurationError, GatewayResponseError
+from ai.gateway import (
+    extract_live, test_connection, config, GatewayConfigurationError, GatewayResponseError,
+    sniff_image_mime, transcribe_image,
+)
 
 FRONTEND_INDEX = Path(__file__).resolve().parent.parent / 'frontend' / 'index.html'
 
@@ -48,7 +51,7 @@ class RFQRequest(BaseModel):
     buyer_id: str = Field(min_length=1,max_length=120)
     buyer_email: str | None = None
     text: str = Field(min_length=4,max_length=50000)
-    source_type: Literal['email','text','pdf','csv','xlsx'] = 'text'
+    source_type: Literal['email','text','pdf','csv','xlsx','image'] = 'text'
 
 class ClarifyRequest(BaseModel):
     # All dimensions are inches; missing fields remain unchanged.
@@ -91,7 +94,7 @@ def gateway_error(exc: Exception) -> HTTPException:
     return HTTPException(502,detail=f"Live model extraction failed: {type(exc).__name__}")
 
 
-def create_rfq(body:RFQRequest,tid:str,idem:str|None=None):
+def create_rfq(body:RFQRequest,tid:str,idem:str|None=None,vision:dict|None=None):
     if idem:
         previous=store.find_idempotent(tid,idem)
         if previous: return engine.summarize(previous)
@@ -100,15 +103,32 @@ def create_rfq(body:RFQRequest,tid:str,idem:str|None=None):
         lines, gateway_details = extract_live(body.text)
     except (GatewayConfigurationError, GatewayResponseError) as exc:
         raise gateway_error(exc) from exc
+    if vision:
+        extract_latency = gateway_details.get('latency_ms') or 0
+        vision_latency = vision.get('vision_latency_ms') or 0
+        gateway_details = {
+            **gateway_details,
+            'vision_model': vision.get('vision_model'),
+            'vision_latency_ms': vision_latency,
+            'extract_latency_ms': extract_latency,
+            'latency_ms': extract_latency + vision_latency,
+            'source': vision.get('source', 'image_transcript'),
+            'model': f"{vision.get('vision_model')} → {gateway_details.get('model')}",
+        }
     parser_mode = 'nicrron_live'
     if not lines:
         raise HTTPException(422,'No recognizable material lines found; revise the RFQ text.')
     catalog=store.load_catalog(tid)
     lines=[engine.analyze_line(line,catalog) for line in lines]
+    events=[event('rfq.received','RFQ ingested')]
+    if vision:
+        events.append(event('rfq.image_transcribed',
+            f"Vision transcript via {vision.get('vision_model')} ({vision.get('vision_latency_ms')} ms)"))
+    events.append(event('rfq.analyzed',f'{len(lines)} lines processed using {parser_mode}'))
     rfq={'id':rid,'tenant_id':tid,'buyer_id':body.buyer_id,'buyer_email':body.buyer_email,
          'source_type':body.source_type,'source_text':body.text,'parser_mode':parser_mode,
          'gateway':gateway_details,
-         'lines':lines,'events':[event('rfq.received','RFQ ingested'),event('rfq.analyzed',f'{len(lines)} lines processed using {parser_mode}')],
+         'lines':lines,'events':events,
          'created_at':now(),'idempotency_key':idem}
     store.save_rfq(rfq)
     return engine.summarize(rfq)
@@ -145,11 +165,14 @@ def test_gateway(_tid: str=Depends(tenant)):
 def ingest_rfq(body:RFQRequest,tid:str=Depends(tenant),idempotency_key:str|None=Header(default=None,alias='Idempotency-Key')):
     return create_rfq(body,tid,idempotency_key)
 
+IMAGE_SUFFIXES = ('.png', '.jpg', '.jpeg', '.webp', '.gif')
+
 @app.post('/v1/rfqs/upload',status_code=201,tags=['RFQs'])
 async def ingest_upload(file:UploadFile=File(...),buyer_id:str=Form(...),buyer_email:str|None=Form(None),tid:str=Depends(tenant)):
     raw=await file.read(5_000_001)
     if len(raw)>5_000_000: raise HTTPException(413,'5MB limit for hackathon demo')
     filename=(file.filename or '').lower()
+    vision: dict | None = None
     try:
         if filename.endswith(('.txt','.eml')): text=raw.decode('utf-8')
         elif filename.endswith('.pdf'):
@@ -162,12 +185,25 @@ async def ingest_upload(file:UploadFile=File(...),buyer_id:str=Form(...),buyer_e
             import openpyxl
             wb=openpyxl.load_workbook(io.BytesIO(raw),read_only=True,data_only=True)
             text='\n'.join(' '.join(str(v) for v in row if v is not None) for sheet in wb for row in sheet.values)
-        else: raise HTTPException(415,'Supported formats: .txt .eml .pdf .csv .xlsx')
+        elif filename.endswith(IMAGE_SUFFIXES):
+            mime = sniff_image_mime(raw)
+            if not mime:
+                raise HTTPException(415,'File looks like an image by name but content is not PNG/JPEG/WebP/GIF')
+            try:
+                text, vision = transcribe_image(raw, mime)
+            except (GatewayConfigurationError, GatewayResponseError) as exc:
+                raise gateway_error(exc) from exc
+        else:
+            raise HTTPException(415,'Supported formats: .txt .eml .pdf .csv .xlsx .png .jpg .jpeg .webp .gif')
     except HTTPException: raise
     except Exception as ex: raise HTTPException(422,f'Could not parse uploaded file: {type(ex).__name__}')
-    if not text.strip(): raise HTTPException(422,'No extractable text; scanned PDFs require OCR')
-    source='pdf' if filename.endswith('.pdf') else 'csv' if filename.endswith('.csv') else 'xlsx' if filename.endswith('.xlsx') else 'email' if filename.endswith('.eml') else 'text'
-    return create_rfq(RFQRequest(buyer_id=buyer_id,buyer_email=buyer_email,text=text,source_type=source),tid)
+    if not text.strip():
+        raise HTTPException(422,'No extractable text; upload a photo/screenshot of RFQ text, or a text-based PDF')
+    if filename.endswith(IMAGE_SUFFIXES):
+        source = 'image'
+    else:
+        source='pdf' if filename.endswith('.pdf') else 'csv' if filename.endswith('.csv') else 'xlsx' if filename.endswith('.xlsx') else 'email' if filename.endswith('.eml') else 'text'
+    return create_rfq(RFQRequest(buyer_id=buyer_id,buyer_email=buyer_email,text=text,source_type=source),tid,vision=vision)
 
 @app.get('/v1/rfqs/{rfq_id}',tags=['RFQs'])
 def fetch_rfq(rfq_id:str,tid:str=Depends(tenant)):

@@ -108,3 +108,67 @@ def test_frontend_is_single_file(client):
     assert '<html' in r.text
     assert 'Process with real AI gateway' in r.text
     assert '/v1/rfqs' in r.text
+    assert '.png' in r.text
+
+
+# Minimal valid 1×1 PNG (magic bytes only matter for sniffing; vision is stubbed).
+TINY_PNG = bytes.fromhex(
+    '89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489'
+    '0000000a49444154789c63000100000500010d0a2db40000000049454e44ae426082'
+)
+
+
+def test_image_upload_uses_vision_then_extraction(client, monkeypatch):
+    calls = []
+
+    def remote_fake(messages, *, max_tokens=2200, model=None):
+        calls.append({'messages': messages, 'model': model, 'max_tokens': max_tokens})
+        user = messages[-1]['content']
+        if isinstance(user, list):
+            assert any(part.get('type') == 'image_url' for part in user)
+            assert model == 'anthropic/claude-haiku-4-5' or model is None or 'haiku' in (model or '')
+            return SAMPLE, 'anthropic/claude-haiku-4-5', 111
+        return FAKE_GATEWAY_JSON, 'nicrron/auto', 222
+
+    monkeypatch.setenv('NICRRON_VISION_MODEL', 'anthropic/claude-haiku-4-5')
+    monkeypatch.setattr(gateway, '_completion', remote_fake)
+    r = client.post(
+        '/v1/rfqs/upload',
+        headers=H,
+        data={'buyer_id': 'ACME'},
+        files={'file': ('sample-rfq.png', TINY_PNG, 'image/png')},
+    )
+    assert r.status_code == 201, r.text
+    data = r.json()
+    assert data['parser_mode'] == 'nicrron_live'
+    assert data['line_count'] == 2
+    assert data['lines'][0]['match']['sku'] == 'SS-304-16GA-4896'
+    assert data['gateway']['vision_model'] == 'anthropic/claude-haiku-4-5'
+    assert data['gateway']['vision_latency_ms'] == 111
+    assert data['gateway']['extract_latency_ms'] == 222
+    assert data['gateway']['latency_ms'] == 333
+    assert data['gateway']['source'] == 'image_transcript'
+    assert len(calls) == 2
+    assert isinstance(calls[0]['messages'][-1]['content'], list)
+    assert isinstance(calls[1]['messages'][-1]['content'], str)
+
+
+def test_non_image_extension_still_rejected(client):
+    r = client.post(
+        '/v1/rfqs/upload',
+        headers=H,
+        data={'buyer_id': 'ACME'},
+        files={'file': ('notes.docx', b'not-an-image', 'application/octet-stream')},
+    )
+    assert r.status_code == 415
+    assert '.png' in r.json()['detail']
+
+
+def test_image_extension_with_bad_bytes_rejected(client):
+    r = client.post(
+        '/v1/rfqs/upload',
+        headers=H,
+        data={'buyer_id': 'ACME'},
+        files={'file': ('fake.png', b'not-really-png', 'image/png')},
+    )
+    assert r.status_code == 415
