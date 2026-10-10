@@ -18,7 +18,10 @@ import httpx
 from ai import engine
 from api import store
 import database
-from ai.gateway import extract_live, test_connection, config, transcribe_images, GatewayConfigurationError, GatewayResponseError
+from ai.gateway import (
+    extract_live, test_connection, config, GatewayConfigurationError, GatewayResponseError,
+    sniff_image_mime, transcribe_image,
+)
 
 FRONTEND_INDEX = Path(__file__).resolve().parent.parent / 'frontend' / 'index.html'
 
@@ -49,7 +52,7 @@ class RFQRequest(BaseModel):
     buyer_id: str = Field(min_length=1,max_length=120)
     buyer_email: str | None = None
     text: str = Field(min_length=4,max_length=50000)
-    source_type: Literal['email','text','pdf','csv','xlsx','docx','image'] = 'text'
+    source_type: Literal['email','text','pdf','csv','xlsx','image'] = 'text'
 
 class ClarifyRequest(BaseModel):
     # All dimensions are inches; missing fields remain unchanged.
@@ -92,7 +95,7 @@ def gateway_error(exc: Exception) -> HTTPException:
     return HTTPException(502,detail=f"Live model extraction failed: {type(exc).__name__}")
 
 
-def create_rfq(body:RFQRequest,tid:str,idem:str|None=None):
+def create_rfq(body:RFQRequest,tid:str,idem:str|None=None,vision:dict|None=None):
     if idem:
         previous=store.find_idempotent(tid,idem)
         if previous: return engine.summarize(previous)
@@ -101,15 +104,32 @@ def create_rfq(body:RFQRequest,tid:str,idem:str|None=None):
         lines, gateway_details = extract_live(body.text)
     except (GatewayConfigurationError, GatewayResponseError) as exc:
         raise gateway_error(exc) from exc
+    if vision:
+        extract_latency = gateway_details.get('latency_ms') or 0
+        vision_latency = vision.get('vision_latency_ms') or 0
+        gateway_details = {
+            **gateway_details,
+            'vision_model': vision.get('vision_model'),
+            'vision_latency_ms': vision_latency,
+            'extract_latency_ms': extract_latency,
+            'latency_ms': extract_latency + vision_latency,
+            'source': vision.get('source', 'image_transcript'),
+            'model': f"{vision.get('vision_model')} → {gateway_details.get('model')}",
+        }
     parser_mode = 'nicrron_live'
     if not lines:
         raise HTTPException(422,'No recognizable material lines found; revise the RFQ text.')
     catalog=store.load_catalog(tid)
     lines=[engine.analyze_line(line,catalog) for line in lines]
+    events=[event('rfq.received','RFQ ingested')]
+    if vision:
+        events.append(event('rfq.image_transcribed',
+            f"Vision transcript via {vision.get('vision_model')} ({vision.get('vision_latency_ms')} ms)"))
+    events.append(event('rfq.analyzed',f'{len(lines)} lines processed using {parser_mode}'))
     rfq={'id':rid,'tenant_id':tid,'buyer_id':body.buyer_id,'buyer_email':body.buyer_email,
          'source_type':body.source_type,'source_text':body.text,'parser_mode':parser_mode,
          'gateway':gateway_details,
-         'lines':lines,'events':[event('rfq.received','RFQ ingested'),event('rfq.analyzed',f'{len(lines)} lines processed using {parser_mode}')],
+         'lines':lines,'events':events,
          'created_at':now(),'idempotency_key':idem}
     store.save_rfq(rfq)
     return engine.summarize(rfq)
@@ -146,60 +166,45 @@ def test_gateway(_tid: str=Depends(tenant)):
 def ingest_rfq(body:RFQRequest,tid:str=Depends(tenant),idempotency_key:str|None=Header(default=None,alias='Idempotency-Key')):
     return create_rfq(body,tid,idempotency_key)
 
+IMAGE_SUFFIXES = ('.png', '.jpg', '.jpeg', '.webp', '.gif')
+
 @app.post('/v1/rfqs/upload',status_code=201,tags=['RFQs'])
 async def ingest_upload(file:UploadFile=File(...),buyer_id:str=Form(...),buyer_email:str|None=Form(None),tid:str=Depends(tenant)):
-    raw=await file.read(15_000_001)
-    if len(raw)>15_000_000: raise HTTPException(413,'15MB limit for hackathon demo')
+    raw=await file.read(5_000_001)
+    if len(raw)>5_000_000: raise HTTPException(413,'5MB limit for hackathon demo')
     filename=(file.filename or '').lower()
-    ext=filename.rsplit('.',1)[-1] if '.' in filename else ''
+    vision: dict | None = None
     try:
-        text, source = read_upload(raw, ext, file.content_type or '')
-    except (GatewayConfigurationError, GatewayResponseError) as exc:
-        raise gateway_error(exc) from exc
+        if filename.endswith(('.txt','.eml')): text=raw.decode('utf-8')
+        elif filename.endswith('.pdf'):
+            import fitz
+            doc=fitz.open(stream=raw,filetype='pdf')
+            text='\n'.join(page.get_text() for page in doc)
+        elif filename.endswith('.csv'):
+            text='\n'.join(' '.join(row) for row in csv.reader(io.StringIO(raw.decode('utf-8'))))
+        elif filename.endswith('.xlsx'):
+            import openpyxl
+            wb=openpyxl.load_workbook(io.BytesIO(raw),read_only=True,data_only=True)
+            text='\n'.join(' '.join(str(v) for v in row if v is not None) for sheet in wb for row in sheet.values)
+        elif filename.endswith(IMAGE_SUFFIXES):
+            mime = sniff_image_mime(raw)
+            if not mime:
+                raise HTTPException(415,'File looks like an image by name but content is not PNG/JPEG/WebP/GIF')
+            try:
+                text, vision = transcribe_image(raw, mime)
+            except (GatewayConfigurationError, GatewayResponseError) as exc:
+                raise gateway_error(exc) from exc
+        else:
+            raise HTTPException(415,'Supported formats: .txt .eml .pdf .csv .xlsx .png .jpg .jpeg .webp .gif')
     except HTTPException: raise
     except Exception as ex: raise HTTPException(422,f'Could not parse uploaded file: {type(ex).__name__}')
-    if not text.strip(): raise HTTPException(422,'No readable text found in the file')
-    return create_rfq(RFQRequest(buyer_id=buyer_id,buyer_email=buyer_email,text=text[:50000],source_type=source),tid)
-
-
-IMAGE_TYPES={'png':'image/png','jpg':'image/jpeg','jpeg':'image/jpeg','webp':'image/webp','gif':'image/gif'}
-
-def read_upload(raw: bytes, ext: str, content_type: str) -> tuple[str, str]:
-    """Any RFQ file -> plain text. Images and scanned PDFs are transcribed by a vision model first."""
-    import fitz, re as _re
-    if ext in ('txt','eml','md','json','log'):
-        return raw.decode('utf-8', errors='replace'), 'email' if ext=='eml' else 'text'
-    if ext in ('html','htm','xml'):
-        return _re.sub(r'<[^>]+>',' ', raw.decode('utf-8', errors='replace')), 'text'
-    if ext=='pdf':
-        doc=fitz.open(stream=raw,filetype='pdf')
-        text='\n'.join(page.get_text() for page in doc)
-        if text.strip(): return text, 'pdf'
-        pages=[(page.get_pixmap(dpi=150).tobytes('png'),'image/png') for page in list(doc)[:6]]   # scanned: no text layer
-        return transcribe_images(pages)[0], 'pdf'
-    if ext in ('csv','tsv'):
-        rows=csv.reader(io.StringIO(raw.decode('utf-8', errors='replace')), delimiter='\t' if ext=='tsv' else ',')
-        return '\n'.join(' '.join(row) for row in rows), 'csv'
-    if ext in ('xlsx','xlsm'):
-        import openpyxl
-        wb=openpyxl.load_workbook(io.BytesIO(raw),read_only=True,data_only=True)
-        return '\n'.join(' '.join(str(v) for v in row if v is not None) for sheet in wb for row in sheet.values), 'xlsx'
-    if ext=='docx':
-        import zipfile
-        xml=zipfile.ZipFile(io.BytesIO(raw)).read('word/document.xml').decode('utf-8')
-        return _re.sub(r'<[^>]+>','',xml.replace('</w:p>','\n').replace('<w:tab/>','\t')), 'docx'
-    if ext in IMAGE_TYPES or ext in ('bmp','tif','tiff') or content_type.startswith('image/'):
-        mime=IMAGE_TYPES.get(ext)
-        if not mime:   # bmp, tiff, etc.: convert to PNG first
-            raw, mime = fitz.Pixmap(raw).tobytes('png'), 'image/png'
-        return transcribe_images([(raw, mime)])[0], 'image'
-    try:
-        return raw.decode('utf-8'), 'text'     # unknown extension but plain text
-    except UnicodeDecodeError:
-        raise HTTPException(415,'Unsupported file. Send a PDF, image (PNG/JPG/WebP/GIF/BMP/TIFF), Word .docx, Excel .xlsx, CSV, email or text file. Old .xls/.doc: save as .xlsx/.docx first.')
-    if not text.strip(): raise HTTPException(422,'No extractable text; scanned PDFs require OCR')
-    source='pdf' if filename.endswith('.pdf') else 'csv' if filename.endswith('.csv') else 'xlsx' if filename.endswith('.xlsx') else 'email' if filename.endswith('.eml') else 'text'
-    return create_rfq(RFQRequest(buyer_id=buyer_id,buyer_email=buyer_email,text=text,source_type=source),tid)
+    if not text.strip():
+        raise HTTPException(422,'No extractable text; upload a photo/screenshot of RFQ text, or a text-based PDF')
+    if filename.endswith(IMAGE_SUFFIXES):
+        source = 'image'
+    else:
+        source='pdf' if filename.endswith('.pdf') else 'csv' if filename.endswith('.csv') else 'xlsx' if filename.endswith('.xlsx') else 'email' if filename.endswith('.eml') else 'text'
+    return create_rfq(RFQRequest(buyer_id=buyer_id,buyer_email=buyer_email,text=text,source_type=source),tid,vision=vision)
 
 @app.get('/v1/rfqs/{rfq_id}',tags=['RFQs'])
 def fetch_rfq(rfq_id:str,tid:str=Depends(tenant)):
