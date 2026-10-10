@@ -11,6 +11,7 @@ from typing import Any
 import httpx
 from pydantic import BaseModel, Field, ValidationError, field_validator
 from ai.engine import extract_rule_line
+from ai import prism
 
 DEFAULT_BASE_URL = "https://api.nicrron.ai/v1"
 # nicrron/auto can route to slow reasoning models; fastest keeps text RFQs snappy.
@@ -219,11 +220,18 @@ def _completion(
     max_tokens: int = 2200,
     model: str | None = None,
     timeout_seconds: float | None = None,
+    purpose: str | None = None,
 ) -> tuple[str, str, int]:
     base, api_key = gateway_auth()
     resolved_model = model or os.getenv("NICRRON_MODEL", DEFAULT_MODEL)
     timeout = timeout_seconds if timeout_seconds is not None else float(os.getenv("NICRRON_TIMEOUT_SECONDS", "40"))
     start = time.monotonic()
+
+    def _fail(msg: str) -> GatewayResponseError:   # every failed call is traced to PRISM too
+        prism.trace_llm(model=resolved_model, messages=messages, output="", purpose=purpose, error=msg,
+                        latency_ms=round((time.monotonic() - start) * 1000))
+        return GatewayResponseError(msg)
+
     try:
         # This executes a REAL HTTPS request to the Nicrron API gateway.
         # No local stub, mock response, or fallback in runtime code.
@@ -235,28 +243,32 @@ def _completion(
                 json={"model": resolved_model, "messages": messages, "max_tokens": max_tokens},
             )
             if response.status_code >= 400:
-                raise GatewayResponseError(
-                    "Nicrron HTTP " + str(response.status_code) + ": " + response.text[:260]
-                )
+                raise _fail("Nicrron HTTP " + str(response.status_code) + ": " + response.text[:260])
             payload = response.json()
+    except GatewayResponseError:
+        raise
     except (httpx.HTTPError, ValueError) as exc:
-        raise GatewayResponseError("Nicrron network or response failure: " + str(exc)[:260]) from exc
+        raise _fail("Nicrron network or response failure: " + str(exc)[:260]) from exc
     elapsed = round((time.monotonic() - start) * 1000)
     try:
         content = payload['choices'][0]['message']['content']
         real_model = payload.get('model') or resolved_model
     except (KeyError, IndexError, TypeError) as exc:
-        raise GatewayResponseError("Gateway response missing choices[0].message.content") from exc
+        raise _fail("Gateway response missing choices[0].message.content") from exc
     if not isinstance(content, str) or not content.strip():
-        raise GatewayResponseError("Gateway returned no assistant text")
+        raise _fail("Gateway returned no assistant text")
+    prism.trace_llm(model=real_model, messages=messages, output=content, latency_ms=elapsed, purpose=purpose,
+                    usage=payload.get("usage") if isinstance(payload, dict) else None)
     return content, real_model, elapsed
 
 def test_connection() -> dict:
-    response, model, latency = _completion([
-        {"role":"system", "content":"Reply only with OK."},
-        {"role":"user", "content":"Ping for an industrial RFQ quoting application."}
-    ], max_tokens=25)
-    return {"connected": True, "model": model, "latency_ms": latency, "model_reply": response[:200],
+    with prism.session("gateway-test"):
+        response, model, latency = _completion([
+            {"role":"system", "content":"Reply only with OK."},
+            {"role":"user", "content":"Ping for an industrial RFQ quoting application."}
+        ], max_tokens=25, purpose="gateway_test")
+        prism.flush()
+    return {"prism": prism.status(), "connected": True, "model": model, "latency_ms": latency, "model_reply": response[:200],
             "provider": "Nicrron", "gateway_call": "live"}
 
 
@@ -339,7 +351,7 @@ def extract_live(text: str) -> tuple[list[dict], dict]:
     raw_json, model, latency_ms = _completion([
         {"role":"system", "content":SYSTEM_PROMPT},
         {"role":"user", "content":text},
-    ], max_tokens=int(os.getenv("NICRRON_EXTRACT_MAX_TOKENS", "8000")))
+    ], max_tokens=int(os.getenv("NICRRON_EXTRACT_MAX_TOKENS", "8000")), purpose="rfq_extract")
     try:
         result = Extraction.model_validate(_parse_json(raw_json))
     except (ValidationError, ValueError) as exc:
@@ -373,6 +385,7 @@ def extract_live_from_image(image_bytes: bytes, mime: str) -> tuple[list[dict], 
         max_tokens=1400,
         model=vision_model,
         timeout_seconds=vision_timeout,
+        purpose="rfq_image_extract",
     )
     try:
         payload = _parse_json(raw_json)

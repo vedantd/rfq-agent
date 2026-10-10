@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.staticfiles import StaticFiles
 import httpx
 import database
-from ai import engine, market
+from ai import engine, market, prism
 from api import store
 import database
 from ai.gateway import (
@@ -115,16 +115,19 @@ def create_rfq(
     idem:str|None=None,
     precomputed:tuple[list[dict],dict]|None=None,
     defer_analysis:bool=False,
+    rfq_id:str|None=None,
 ):
     if idem:
         previous=store.find_idempotent(tid,idem)
         if previous: return engine.summarize(previous)
-    rid=f'rfq_{uuid.uuid4().hex[:12]}'
+    rid=rfq_id or new_rfq_id()
     try:
         if precomputed is not None:
             lines, gateway_details = precomputed
         else:
-            lines, gateway_details = extract_live(body.text)
+            with prism.session(rid):   # one PRISM trajectory per RFQ
+                lines, gateway_details = extract_live(body.text)
+                prism.flush()
     except (GatewayConfigurationError, GatewayResponseError) as exc:
         raise gateway_error(exc) from exc
     parser_mode = 'nicrron_live'
@@ -139,6 +142,8 @@ def create_rfq(
         catalog=store.load_catalog(tid)
         lines=[engine.analyze_line(line,catalog) for line in lines]
     events=[event('rfq.received','RFQ ingested')]
+    if prism.configured():
+        events.append(event('prism.traced',f'Model calls traced to Block Convey PRISM (session {rid})'))
     if body.source_type == 'image':
         events.append(event('rfq.image_extracted',
             f"Multimodal extract via {gateway_details.get('vision_model') or gateway_details.get('model')} "
@@ -151,6 +156,10 @@ def create_rfq(
          'created_at':now(),'idempotency_key':idem}
     store.save_rfq(rfq)
     return engine.summarize(rfq)
+
+
+def new_rfq_id() -> str:
+    return f'rfq_{uuid.uuid4().hex[:12]}'
 
 
 def require_rfq(tid,rid):
@@ -169,7 +178,7 @@ def index():
 
 @app.get('/health',tags=['Gateway'])
 def health():
-    return {'status':'ok','service':'rudco-quotepilot-live', 'gateway': config(),
+    return {'status':'ok','service':'rudco-quotepilot-live', 'gateway': config(), 'prism': prism.status(),
             'note':'Configured does not mean connected; POST /v1/gateway/test performs a real call.'}
 
 @app.post('/v1/gateway/test',tags=['Gateway'])
@@ -194,6 +203,7 @@ async def ingest_upload(file:UploadFile=File(...),buyer_id:str=Form(...),buyer_e
     if len(raw)>5_000_000: raise HTTPException(413,'5MB limit for hackathon demo')
     filename=(file.filename or '').lower()
     precomputed: tuple[list[dict], dict] | None = None
+    rid=new_rfq_id()   # minted before the image call so the vision trace joins this RFQ's PRISM session
     try:
         if filename.endswith(('.txt','.eml')): text=raw.decode('utf-8')
         elif filename.endswith('.pdf'):
@@ -211,7 +221,9 @@ async def ingest_upload(file:UploadFile=File(...),buyer_id:str=Form(...),buyer_e
             if not mime:
                 raise HTTPException(415,'File looks like an image by name but content is not PNG/JPEG/WebP/GIF')
             try:
-                lines, gateway_details, text = extract_live_from_image(raw, mime)
+                with prism.session(rid):
+                    lines, gateway_details, text = extract_live_from_image(raw, mime)
+                    prism.flush()
             except (GatewayConfigurationError, GatewayResponseError) as exc:
                 raise gateway_error(exc) from exc
             precomputed = (lines, gateway_details)
@@ -230,6 +242,7 @@ async def ingest_upload(file:UploadFile=File(...),buyer_id:str=Form(...),buyer_e
         tid,
         precomputed=precomputed,
         defer_analysis=defer_analysis,
+        rfq_id=rid,
     )
 
 @app.get('/v1/rfqs/{rfq_id}',tags=['RFQs'])

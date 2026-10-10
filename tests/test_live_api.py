@@ -37,7 +37,7 @@ def test_missing_key_does_not_fake_success(client, monkeypatch):
 
 def test_live_extraction_quote_flow(client, monkeypatch):
     calls=[]
-    def remote_fake(messages,*,max_tokens=2200, model=None, timeout_seconds=None):
+    def remote_fake(messages,*,max_tokens=2200, model=None, timeout_seconds=None, purpose=None, **kwargs):
         # Only in tests: production always uses _completion to POST to Nicrron.
         calls.append(messages)
         return FAKE_GATEWAY_JSON,'nicrron/auto',321
@@ -125,7 +125,7 @@ FAKE_IMAGE_GATEWAY_JSON = json.dumps({
 def test_image_upload_single_multimodal_extract(client, monkeypatch):
     calls = []
 
-    def remote_fake(messages, *, max_tokens=2200, model=None, timeout_seconds=None):
+    def remote_fake(messages, *, max_tokens=2200, model=None, timeout_seconds=None, purpose=None, **kwargs):
         calls.append({'messages': messages, 'model': model, 'max_tokens': max_tokens,
                       'timeout_seconds': timeout_seconds})
         user = messages[-1]['content']
@@ -210,7 +210,7 @@ CSV_BYTES = (
 def test_eml_upload_queries_agent_and_matches_catalog(client, monkeypatch):
     calls = []
 
-    def remote_fake(messages, *, max_tokens=2200, model=None):
+    def remote_fake(messages, *, max_tokens=2200, model=None, purpose=None, **kwargs):
         calls.append(messages[-1]['content'])
         return UPLOAD_FAKE_JSON, 'nicrron/auto', 123
 
@@ -234,7 +234,7 @@ def test_eml_upload_queries_agent_and_matches_catalog(client, monkeypatch):
 
 def test_csv_upload_queries_agent(client, monkeypatch):
     monkeypatch.setattr(gateway, '_completion',
-                        lambda messages, *, max_tokens=2200, model=None: (UPLOAD_FAKE_JSON, 'nicrron/auto', 99))
+                        lambda messages, *, max_tokens=2200, model=None, purpose=None, **kwargs: (UPLOAD_FAKE_JSON, 'nicrron/auto', 99))
     r = client.post(
         '/v1/rfqs/upload',
         headers=H,

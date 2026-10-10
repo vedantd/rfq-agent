@@ -39,3 +39,15 @@ This project uses **Tailwind CSS v4** through the `@tailwindcss/vite` plugin con
 - Use double quotes for strings containing apostrophes (`"We're here to help"`), or escape them in single-quoted strings. An unescaped apostrophe in a single-quoted string breaks the build.
 - Ensure JSX tags are closed and braces are balanced.
 - Export components as default exports.
+
+## PRISM tracing (do not remove)
+
+This project sends traces to PRISM. Env vars: `PRISMTRACE_API_KEY`,
+`PRISMTRACE_PROJECT_ID`, `PRISMTRACE_HOST`.
+
+Tracing is currently wired at: ai/prism.py, ai/gateway.py (_completion, test_connection, extract_live, extract_live_from_image), api/app.py (create_rfq session per RFQ, image upload session, /health prism status)
+
+**Standing rule.** Whenever you add or change an agent, chain, graph, tool,
+retriever, or any entry point that calls a model, wire it to PRISM before you
+finish. Unwired code is invisible in the dashboard. If you are unsure whether
+something is covered, assume it is not and wire it.
