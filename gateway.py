@@ -1,0 +1,187 @@
+"""Real Nicrron gateway calls. No fake responses or rules-only runtime fallback."""
+from __future__ import annotations
+import json
+import os
+import re
+import time
+from typing import Any
+
+import httpx
+from pydantic import BaseModel, Field, ValidationError
+from engine import extract_rule_line
+
+DEFAULT_BASE_URL = "https://api.nicrron.ai/v1"
+DEFAULT_MODEL = "nicrron/auto"
+
+SYSTEM_PROMPT = """You extract line items from an industrial buyer RFQ.
+Return a valid JSON object with one top-level key: "lines" (an array).
+Each line MUST have:
+- raw_text: an EXACT contiguous substring from the user's original text (verbatim)
+- material: stainless_steel, carbon_steel or null
+- form: sheet, plate or null
+- grade: 304, 316, 316L, A36, etc., or null
+- thickness_in, width_in, length_in: number in inches or null
+- quantity: integer or null
+- standard_required: only a standard explicitly requested by the buyer, e.g. ASTM A240, or null
+- required_certificates: array, use MTR only when buyer explicitly mentions mill cert/test report
+- country_of_origin_required: boolean, true only when buyer explicitly requests it
+- evidence: object mapping non-null extracted fields to EXACT verbatim substrings that support them
+
+Important safeguards:
+Never fill a missing value from your own assumptions or from typical industry specifications.
+'4x8' following sheet dimensions commonly means feet; normalize to 48x96 inches only with clear context.
+'16ga' has material-specific thickness; if unsure, return thickness_in=null.
+Never invent ASTM standards, quotes, prices, supplier inventory, certificates or customer names.
+Never invent extra line items. Split each separately requested product into its own line.
+Missing values must be JSON null. Do not include markdown fences, commentary or trailing commas.
+"""
+
+
+class ModelLine(BaseModel):
+    raw_text: str = Field(min_length=1)
+    material: str | None = None
+    form: str | None = None
+    grade: str | None = None
+    thickness_in: float | None = None
+    width_in: float | None = None
+    length_in: float | None = None
+    quantity: int | None = None
+    standard_required: str | None = None
+    required_certificates: list[str] = Field(default_factory=list)
+    country_of_origin_required: bool = False
+    evidence: dict[str, str] = Field(default_factory=dict)
+
+class Extraction(BaseModel):
+    lines: list[ModelLine] = Field(min_length=1, max_length=60)
+
+
+class GatewayConfigurationError(Exception):
+    pass
+
+
+class GatewayResponseError(Exception):
+    pass
+
+
+def config() -> dict:
+    return {
+        "configured": bool(os.getenv("NICRRON_API_KEY", "").strip()),
+        "base_url": os.getenv("NICRRON_BASE_URL", DEFAULT_BASE_URL),
+        "model": os.getenv("NICRRON_MODEL", DEFAULT_MODEL),
+    }
+
+
+def gateway_auth() -> tuple[str,str]:
+    api_key = os.getenv("NICRRON_API_KEY", "").strip()
+    if not api_key:
+        raise GatewayConfigurationError("NICRRON_API_KEY is missing. Put it in your local .env file and restart the server.")
+    base = os.getenv("NICRRON_BASE_URL", DEFAULT_BASE_URL).rstrip('/')
+    if not base.startswith('https://') and not (os.getenv('ALLOW_INSECURE_GATEWAY')=='true' and base.startswith('http://127.0.0.1')):
+        raise GatewayConfigurationError('Gateway base URL must use HTTPS (except explicitly authorized localhost tests)')
+    return base, api_key
+
+
+def _completion(messages: list[dict[str,str]], *, max_tokens: int = 2200) -> tuple[str, str, int]:
+    base, api_key = gateway_auth()
+    model = os.getenv("NICRRON_MODEL", DEFAULT_MODEL)
+    start = time.monotonic()
+    try:
+        # This executes a REAL HTTPS request to the Nicrron API gateway.
+        # No local stub, mock response, or fallback in runtime code.
+        with httpx.Client(timeout=float(os.getenv("NICRRON_TIMEOUT_SECONDS", "40"))) as client:
+            response = client.post(
+                base + "/chat/completions",
+                headers={"Authorization": "Bearer " + api_key,
+                         "Content-Type": "application/json"},
+                json={"model": model, "messages": messages, "max_tokens": max_tokens},
+            )
+            if response.status_code >= 400:
+                raise GatewayResponseError(
+                    "Nicrron HTTP " + str(response.status_code) + ": " + response.text[:260]
+                )
+            payload = response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise GatewayResponseError("Nicrron network or response failure: " + str(exc)[:260]) from exc
+    elapsed = round((time.monotonic() - start) * 1000)
+    try:
+        content = payload['choices'][0]['message']['content']
+        real_model = payload.get('model') or model
+    except (KeyError, IndexError, TypeError) as exc:
+        raise GatewayResponseError("Gateway response missing choices[0].message.content") from exc
+    if not isinstance(content, str) or not content.strip():
+        raise GatewayResponseError("Gateway returned no assistant text")
+    return content, real_model, elapsed
+
+def test_connection() -> dict:
+    response, model, latency = _completion([
+        {"role":"system", "content":"Reply only with OK."},
+        {"role":"user", "content":"Ping for an industrial RFQ quoting application."}
+    ], max_tokens=25)
+    return {"connected": True, "model": model, "latency_ms": latency, "model_reply": response[:200],
+            "provider": "Nicrron", "gateway_call": "live"}
+
+
+def _parse_json(raw: str) -> dict[str, Any]:
+    clean = raw.strip()
+    if clean.startswith('```'):
+        clean = re.sub(r'^```(?:json)?\s*', '', clean, flags=re.I)
+        clean = re.sub(r'\s*```$', '', clean)
+    try:
+        payload = json.loads(clean)
+    except json.JSONDecodeError as exc:
+        raise GatewayResponseError(f"Model did not return valid JSON: {exc.msg}") from exc
+    if not isinstance(payload, dict):
+        raise GatewayResponseError("Model output must be a JSON object")
+    return payload
+
+
+def _evidenced(raw: str, field: str, value: Any, evidence: dict[str,str]) -> bool:
+    """Do not trust inferred values unless supported by verbatim text."""
+    proof = evidence.get(field)
+    if not isinstance(proof,str) or not proof.strip() or proof.lower() not in raw.lower():
+        return False
+    if field in ('grade','standard_required') and str(value).replace(' ','').lower() not in proof.replace(' ','').lower():
+        return False
+    if field == 'quantity' and str(value) not in proof:
+        return False
+    return True
+
+
+def extract_live(text: str) -> tuple[list[dict], dict]:
+    raw_json, model, latency_ms = _completion([
+        {"role":"system", "content":SYSTEM_PROMPT},
+        {"role":"user", "content":text},
+    ], max_tokens=2800)
+    try:
+        result = Extraction.model_validate(_parse_json(raw_json))
+    except (ValidationError, ValueError) as exc:
+        raise GatewayResponseError("Model output failed schema validation: " + str(exc)[:220]) from exc
+
+    lines: list[dict] = []
+    for idx, proposed in enumerate(result.lines, start=1):
+        raw = proposed.raw_text.strip()
+        if raw not in text:
+            raise GatewayResponseError(f"Line {idx} has no exact supporting substring in the source RFQ")
+        # Start with deterministic extraction; accept LLM supplements ONLY if explicitly evidenced.
+        item = extract_rule_line(raw, idx)
+        candidate = proposed.model_dump()
+        for field in ('material', 'form', 'grade', 'thickness_in', 'width_in', 'length_in',
+                      'quantity', 'standard_required', 'country_of_origin_required'):
+            value = candidate[field]
+            if item.get(field) is not None or value is None:
+                continue
+            if not _evidenced(raw, field, value, proposed.evidence):
+                continue
+            if field in ('thickness_in', 'width_in', 'length_in') and (not isinstance(value,(float,int)) or value <= 0):
+                continue
+            if field == 'quantity' and value <= 0:
+                continue
+            item[field] = value
+        # Certificate flags must be explicitly grounded: deterministic detection is authoritative.
+        item['extraction_source'] = 'nicrron_live_plus_validation'
+        lines.append(item)
+
+    return lines, {
+        "mode":"live_gateway", "gateway":"Nicrron", "model":model,
+        "latency_ms":latency_ms, "validation":"source-grounded + deterministic"
+    }
