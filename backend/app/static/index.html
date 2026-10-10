@@ -1,0 +1,395 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RFQ Desk</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Archivo:wght@600;700&display=swap">
+<style>
+/* Layout: one-screen desk. Left = dialogue with the agent; right = the working RFQ (lines, then the quote). */
+:root {
+  --bg: #eef0f2; --panel: #ffffff; --ink: #16191d; --muted: #5d6670; --line: #d5dae0;
+  --accent: #0f5c8c; --accent-ink: #ffffff; --steel: #e4e8ec; --me: #e2eef7;
+  --ok: #1d7a46; --warn: #a86b00; --block: #b3261e; --ask: #6a3fb0;
+  --display: "Archivo", "Segoe UI", system-ui, sans-serif;
+  --body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #111417; --panel: #191d22; --ink: #e6e9ec; --muted: #98a2ad; --line: #2b323a;
+    --accent: #5aa7db; --accent-ink: #08131c; --steel: #222831; --me: #16293a;
+    --ok: #5cc98a; --warn: #e3ab3f; --block: #f07a72; --ask: #b493ef; color-scheme: dark; }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--ink); font: 14px/1.5 var(--body); }
+.app { height: 100%; display: grid; grid-template-columns: minmax(320px, 420px) minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); gap: 0 16px; padding: 0 16px; max-width: 1500px; margin: 0 auto; }
+header { grid-column: 1 / -1; display: flex; align-items: baseline; gap: 14px; padding: 14px 0 10px; flex-wrap: wrap; }
+h1 { font: 700 22px var(--display); margin: 0; letter-spacing: -.01em; }
+.sub { color: var(--muted); }
+.health { margin-left: auto; font: 12px var(--mono); color: var(--muted); }
+
+/* dialogue */
+.dialog { display: flex; flex-direction: column; min-height: 0; padding-bottom: 14px; }
+.avatar-slot { display: flex; gap: 10px; align-items: center; padding: 10px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px 10px 0 0; border-bottom: 0; }
+.avatar-slot .face { width: 44px; height: 44px; border-radius: 50%; background: var(--steel); display: grid; place-items: center; font: 700 16px var(--display); color: var(--accent); flex: none; }
+.avatar-slot b { display: block; }
+.avatar-slot span { color: var(--muted); font-size: 12px; }
+.feed { flex: 1; min-height: 0; overflow-y: auto; background: var(--panel); border: 1px solid var(--line); padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.msg { max-width: 92%; padding: 8px 11px; border-radius: 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.msg.agent { background: var(--steel); align-self: flex-start; }
+.msg.me { background: var(--me); align-self: flex-end; }
+.msg.err { background: none; border: 1px solid var(--block); color: var(--block); align-self: flex-start; }
+.msg .q { display: block; margin-top: 6px; padding-left: 8px; border-left: 3px solid var(--ask); }
+.composer { background: var(--panel); border: 1px solid var(--line); border-top: 0; border-radius: 0 0 10px 10px; padding: 10px; display: grid; gap: 8px; }
+.composer .ctx { font: 12px var(--mono); color: var(--ask); min-height: 1em; }
+textarea { width: 100%; resize: vertical; min-height: 64px; font: 14px/1.45 var(--body); color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.hint { color: var(--muted); font: 12px var(--mono); margin-right: auto; }
+button, .btn { font: 600 13px var(--body); border-radius: 8px; padding: 7px 12px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); cursor: pointer; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+button:disabled { opacity: .5; cursor: default; }
+button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+input[type=file] { display: none; }
+
+/* work area */
+.work { min-height: 0; overflow-y: auto; padding-bottom: 20px; display: flex; flex-direction: column; gap: 12px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
+.empty { color: var(--muted); text-align: center; padding: 50px 20px; }
+.empty b { display: block; font: 600 18px var(--display); color: var(--ink); margin-bottom: 6px; }
+.samples { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-top: 14px; }
+.rfq-head { display: flex; gap: 10px 20px; flex-wrap: wrap; align-items: baseline; }
+.rfq-head h2 { font: 700 18px var(--display); margin: 0; }
+.stats { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.stat { font: 12px var(--mono); padding: 3px 8px; border-radius: 999px; background: var(--steel); }
+.reqs { margin-top: 8px; color: var(--muted); font-size: 13px; }
+.table-wrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th { text-align: left; font: 600 11px var(--mono); text-transform: uppercase; letter-spacing: .05em; color: var(--muted); padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+td { padding: 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+tr.line { cursor: pointer; }
+tr.line:hover td { background: var(--bg); }
+tr.detail td { background: var(--bg); font-size: 12.5px; }
+.raw { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+.chip { display: inline-block; font: 600 11px var(--mono); padding: 2px 7px; border-radius: 999px; border: 1px solid currentColor; white-space: nowrap; }
+.MATCH, .OK { color: var(--ok); } .MATCH_ASSUMPTION, .WARN { color: var(--warn); }
+.CLARIFY { color: var(--ask); } .NO_MATCH, .BLOCK { color: var(--block); } .REMOVED { color: var(--muted); }
+.detail ul { margin: 4px 0 0; padding-left: 18px; }
+.qbox { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+.qbox input { flex: 1 1 200px; font: 13px var(--body); padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); }
+.choice { font: 12px var(--mono); padding: 4px 8px; }
+.quote h2 { font: 700 18px var(--display); margin: 0 0 4px; }
+.quote .meta { color: var(--muted); font-size: 13px; margin-bottom: 10px; }
+.total td { font-weight: 600; border-bottom: 0; }
+.excluded { margin-top: 10px; font-size: 13px; color: var(--muted); }
+@media (max-width: 900px) {
+  .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto; height: auto; }
+  .dialog { height: 70vh; }
+}
+@media print {
+  .dialog, header, .rfq-card, .no-print { display: none !important; }
+  .app { display: block; } .work { overflow: visible; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>RFQ Desk</h1>
+    <span class="sub">Messy RFQ in, ready-to-send quote out</span>
+    <span class="health" id="health">checking backend…</span>
+  </header>
+
+  <section class="dialog" aria-label="Dialogue">
+    <div class="avatar-slot" id="avatarSlot">
+      <div class="face" aria-hidden="true">Q</div>
+      <div><b>Quote assistant</b><span>Paste an RFQ, upload a file, then answer my questions.</span></div>
+    </div>
+    <div class="feed" id="feed" aria-live="polite"></div>
+    <form class="composer" id="composer">
+      <div class="ctx" id="ctx"></div>
+      <textarea id="input" placeholder="Paste the RFQ email or list here…"></textarea>
+      <div class="row">
+        <span class="hint">Enter to send · Shift+Enter new line</span>
+        <label class="btn" for="file">Upload file</label>
+        <input type="file" id="file" accept=".pdf,.csv,.xlsx,.xlsm,.eml,.txt,.png,.jpg,.jpeg,.webp">
+        <button type="submit" class="primary" id="send">Send</button>
+      </div>
+    </form>
+  </section>
+
+  <main class="work" id="work">
+    <div class="card empty" id="empty">
+      <b>No RFQ yet</b>
+      Paste an RFQ into the dialogue, upload a PDF, spreadsheet or email, or try a sample.
+      <div class="samples" id="samples"></div>
+    </div>
+  </main>
+</div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+const money = (v) => v == null ? "–" : "$" + Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const STATUS = { MATCH: "Matched", MATCH_ASSUMPTION: "Matched, assumption", CLARIFY: "Needs answer", NO_MATCH: "Not stocked", REMOVED: "Removed" };
+
+let rfq = null, quote = null, busy = false;
+const open = new Set();
+
+async function api(method, path, body, isForm) {
+  const opts = { method, headers: {} };
+  if (body && !isForm) { opts.headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(body); }
+  if (isForm) opts.body = body;
+  const r = await fetch(path, opts);
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.detail || `Request failed (${r.status})`);
+  return data;
+}
+
+function say(text, who = "agent") {
+  const m = el("div", "msg " + who, text);
+  $("#feed").append(m);
+  $("#feed").scrollTop = $("#feed").scrollHeight;
+  return m;
+}
+
+function openQuestions() {
+  return rfq ? rfq.lines.filter((l) => l.question && l.status !== "REMOVED" && !l.approved) : [];
+}
+
+function updateContext() {
+  const q = openQuestions()[0];
+  $("#ctx").textContent = q ? `Answering line ${q.line_no}. Type "new" to start another RFQ.` : (rfq ? "All questions answered. Type to start a new RFQ." : "");
+  $("#input").placeholder = q ? `Your answer for line ${q.line_no}…` : "Paste the RFQ email or list here…";
+}
+
+function setBusy(b) {
+  busy = b; $("#send").disabled = b; $("#file").disabled = b;
+  document.querySelectorAll("#work button").forEach((x) => { x.disabled = b; });
+}
+
+function announce(r) {
+  const s = r.summary;
+  let text = `I read ${s.lines} lines. ${s.quotable} are ready to quote (${money(s.quotable_value)}).`;
+  if (s.blocked) text += ` ${s.blocked} fail a compliance rule.`;
+  const qs = openQuestions();
+  const m = say(qs.length ? text + ` Before I quote the rest I need ${qs.length} answer${qs.length > 1 ? "s" : ""}:` : text + " Nothing is unclear, so you can generate the quote.");
+  for (const l of qs) m.append(el("span", "q", l.question));
+}
+
+async function startRFQ(fn, label) {
+  setBusy(true);
+  say(label, "me");
+  const thinking = say("Reading the RFQ…");
+  try {
+    rfq = await fn(); quote = null; open.clear();
+    thinking.remove();
+    announce(rfq); render();
+  } catch (e) { thinking.remove(); say(e.message, "err"); }
+  setBusy(false); updateContext();
+}
+
+async function answer(line, text, extra = {}) {
+  setBusy(true);
+  say(`Line ${line.line_no}: ${text || JSON.stringify(extra)}`, "me");
+  try {
+    const res = await api("PATCH", `/v1/rfqs/${rfq.id}/lines/${line.line_id}`, { ...(text ? { answer: text } : {}), ...extra });
+    rfq = await api("GET", `/v1/rfqs/${rfq.id}`);
+    const l = res.line;
+    if (l.status === "REMOVED") say(`Removed line ${l.line_no} from the quote.`);
+    else if (l.status === "MATCH" || l.status === "MATCH_ASSUMPTION") {
+      say(`Line ${l.line_no} is now ${l.selected_sku} at ${money(l.price && l.price.unit_price)} each.` + (l.question ? `\n${l.question}` : ""));
+    } else say(l.question ? `Still not clear. ${l.question}` : `Line ${l.line_no}: ${STATUS[l.status]}.`);
+    const next = openQuestions()[0];
+    if (next && next.line_id !== l.line_id) say(`Next, line ${next.line_no}: ${next.question}`);
+    if (!next) say("That's everything. Generate the quote when you're ready.");
+    quote = null; render();
+  } catch (e) { say(e.message, "err"); }
+  setBusy(false); updateContext();
+}
+
+async function approveAll() {
+  setBusy(true);
+  let n = 0, skipped = [];
+  for (const l of rfq.lines) {
+    if (l.approved || !(l.status === "MATCH" || l.status === "MATCH_ASSUMPTION")) continue;
+    if (l.compliance.result === "BLOCK") { skipped.push(l.line_no); continue; }
+    try { await api("POST", `/v1/rfqs/${rfq.id}/lines/${l.line_id}/approve`, {}); n++; } catch (e) { skipped.push(l.line_no); }
+  }
+  rfq = await api("GET", `/v1/rfqs/${rfq.id}`);
+  say(`Approved ${n} line${n === 1 ? "" : "s"}.` + (skipped.length ? ` Left out line ${skipped.join(", ")} because of a compliance block.` : ""));
+  setBusy(false); render();
+}
+
+async function makeQuote() {
+  setBusy(true);
+  try {
+    quote = await api("POST", `/v1/rfqs/${rfq.id}/quotes/draft`, { approved_only: false });
+    say(`Quote ${quote.quote_id}: ${quote.lines.length} lines, ${money(quote.subtotal)}` + (quote.excluded_lines.length ? `, ${quote.excluded_lines.length} line${quote.excluded_lines.length > 1 ? "s" : ""} left off until answered.` : "."));
+    render();
+    $("#quoteCard").scrollIntoView({ behavior: "smooth" });
+  } catch (e) { say(e.message, "err"); }
+  setBusy(false);
+}
+
+// ---------- rendering ----------
+function render() {
+  const work = $("#work");
+  work.replaceChildren();
+  if (!rfq) { work.append(emptyCard()); return; }
+
+  const card = el("section", "card rfq-card");
+  const head = el("div", "rfq-head");
+  head.append(el("h2", null, rfq.reference || "RFQ"), el("span", "sub", [rfq.buyer && rfq.buyer.name, rfq.source.filename || rfq.source.type].filter(Boolean).join(" · ")));
+  card.append(head);
+  const s = rfq.summary, stats = el("div", "stats");
+  [[`${s.lines} lines`], [`${s.match + s.match_assumption} matched`], [`${s.clarify} need answers`], [`${s.no_match} not stocked`], [`${s.blocked} compliance blocks`], [`${money(s.quotable_value)} quotable`]]
+    .forEach(([t]) => stats.append(el("span", "stat", t)));
+  card.append(stats);
+  const reqs = Object.values(rfq.requirements || {}).map((r) => r.source);
+  if (reqs.length) card.append(el("div", "reqs", "Buyer requirements: " + reqs.join(" · ")));
+  for (const w of rfq.warnings || []) card.append(el("div", "reqs", "Note: " + w));
+
+  const wrap = el("div", "table-wrap"), table = el("table");
+  table.innerHTML = "<thead><tr><th>#</th><th>Buyer wrote / our spec</th><th>Status</th><th>SKU</th><th>Qty</th><th>Unit</th><th>Extended</th><th>Compliance</th></tr></thead>";
+  const tb = el("tbody");
+  for (const l of rfq.lines) {
+    const tr = el("tr", "line");
+    tr.append(el("td", null, String(l.line_no)));
+    const d = el("td"); d.append(el("div", "raw", l.raw), el("div", null, specText(l.spec))); tr.append(d);
+    const st = el("td"); st.append(el("span", "chip " + l.status, (l.approved ? "✓ " : "") + STATUS[l.status])); tr.append(st);
+    tr.append(el("td", "raw", l.selected_sku || "–"));
+    tr.append(el("td", "num", l.qty_ea == null ? "?" : String(l.qty_ea)));
+    tr.append(el("td", "num", money(l.price && l.price.unit_price)));
+    tr.append(el("td", "num", money(l.price && l.price.extended)));
+    const c = el("td"); if (l.compliance.result !== "n/a") c.append(el("span", "chip " + l.compliance.result, l.compliance.result)); tr.append(c);
+    tr.onclick = () => { open.has(l.line_id) ? open.delete(l.line_id) : open.add(l.line_id); render(); };
+    tb.append(tr);
+    if (open.has(l.line_id) || (l.question && l.status !== "REMOVED" && !l.approved)) tb.append(detailRow(l));
+  }
+  table.append(tb); wrap.append(table); card.append(wrap);
+
+  const actions = el("div", "row no-print"); actions.style.marginTop = "12px";
+  const ap = el("button", null, "Approve all matched lines"); ap.onclick = approveAll; ap.disabled = busy;
+  const q = el("button", "primary", "Generate quote"); q.onclick = makeQuote; q.disabled = busy;
+  const hint = el("span", "hint", "Click a line for the price reasoning and compliance detail.");
+  actions.append(hint, ap, q); card.append(actions);
+  work.append(card);
+  if (quote) work.append(quoteCard());
+}
+
+function specText(sp) {
+  if (!sp) return "";
+  const p = [sp.grade ? sp.grade + (sp.temper ? "-" + sp.temper : "") : sp.material_family, sp.shape, sp.finish,
+    sp.gauge ? sp.gauge + " ga" : (sp.thickness_in ? sp.thickness_in + " in" : null),
+    sp.width_in && sp.length_in && ["sheet", "plate", "tread plate"].includes(sp.shape) ? `${sp.width_in} x ${sp.length_in}` : (sp.width_in && sp.height_in ? `${sp.width_in} x ${sp.height_in}` : null),
+    sp.length_in && !["sheet", "plate", "tread plate"].includes(sp.shape) ? (sp.length_in / 12) + " ft" : null, sp.standard];
+  return p.filter(Boolean).join(" · ");
+}
+
+function detailRow(l) {
+  const tr = el("tr", "detail"), td = el("td"); td.colSpan = 8;
+  if (l.question && l.status !== "REMOVED" && !l.approved) {
+    const q = el("div"); q.append(el("b", null, "Question for the buyer: "), l.question); td.append(q);
+    const box = el("div", "qbox no-print");
+    for (const o of l.options || []) for (const ch of o.choices || []) {
+      const b = el("button", "choice", ch); b.type = "button";
+      b.onclick = (e) => { e.stopPropagation(); answer(l, ch.replace(/\s*\(.*\)$/, "")); };
+      box.append(b);
+    }
+    const inp = el("input"); inp.placeholder = "Type the buyer's answer…"; inp.onclick = (e) => e.stopPropagation();
+    inp.onkeydown = (e) => { if (e.key === "Enter" && inp.value.trim()) answer(l, inp.value.trim()); };
+    const go = el("button", null, "Apply"); go.type = "button"; go.onclick = (e) => { e.stopPropagation(); if (inp.value.trim()) answer(l, inp.value.trim()); };
+    const rm = el("button", null, "Remove line"); rm.type = "button"; rm.onclick = (e) => { e.stopPropagation(); answer(l, "", { remove: true }); };
+    box.append(inp, go, rm); td.append(box);
+  }
+  const ul = el("ul");
+  if (l.price && l.price.rationale) ul.append(el("li", null, "Price: " + l.price.rationale));
+  if (l.selection_reason) ul.append(el("li", null, "Why this SKU: " + l.selection_reason));
+  for (const f of l.compliance.flags || []) ul.append(el("li", f.severity, `${f.severity}: ${f.message}`));
+  for (const a of l.assumptions || []) ul.append(el("li", "WARN", "Assumption: " + a));
+  for (const n of l.notes || []) ul.append(el("li", null, n));
+  if (l.item) ul.append(el("li", null, `${l.item.description}. Origin ${l.item.country_of_origin}, melt ${l.item.country_of_melt}, ${l.item.stock_qty} in stock, mill ${l.item.mill}.`));
+  if (ul.children.length) td.append(ul);
+  tr.append(td); return tr;
+}
+
+function quoteCard() {
+  const c = el("section", "card quote"); c.id = "quoteCard";
+  c.append(el("h2", null, `Quote ${quote.quote_id}`));
+  const b = quote.buyer || {};
+  c.append(el("div", "meta", `${quote.seller} → ${[b.name, b.company, b.email].filter(Boolean).join(", ") || "buyer"} · RFQ ${quote.rfq_reference || quote.rfq_id} · valid until ${quote.valid_until} · ${quote.terms} · freight ${quote.freight.toLowerCase()}`));
+  const wrap = el("div", "table-wrap"), t = el("table");
+  t.innerHTML = "<thead><tr><th>#</th><th>Item</th><th>Qty</th><th>Unit</th><th>Extended</th><th>Lead</th><th>Origin</th><th>Notes</th></tr></thead>";
+  const tb = el("tbody");
+  for (const i of quote.lines) {
+    const tr = el("tr");
+    tr.append(el("td", null, String(i.line_no)));
+    const d = el("td"); d.append(el("div", null, i.description), el("div", "raw", i.sku)); tr.append(d);
+    tr.append(el("td", "num", String(i.qty)), el("td", "num", money(i.unit_price)), el("td", "num", money(i.extended)),
+      el("td", "num", i.lead_time_days ? i.lead_time_days + " d" : "stock"), el("td", null, i.country_of_origin + (i.country_of_melt && i.country_of_melt !== i.country_of_origin ? ` (melt ${i.country_of_melt})` : "")));
+    tr.append(el("td", "raw", [...i.compliance_notes, ...i.assumptions].join(" · ")));
+    tb.append(tr);
+  }
+  const tot = el("tr", "total"); const lab = el("td", null, "Subtotal"); lab.colSpan = 4; tot.append(lab, el("td", "num", money(quote.subtotal)), el("td")); tot.lastChild.colSpan = 3;
+  tb.append(tot); t.append(tb); wrap.append(t); c.append(wrap);
+  if (quote.excluded_lines.length) {
+    const ex = el("div", "excluded"); ex.append(el("b", null, "Not on this quote yet: "));
+    ex.append(quote.excluded_lines.map((x) => `line ${x.line_no} (${x.reason})`).join("; ")); c.append(ex);
+  }
+  for (const n of quote.notes || []) c.append(el("div", "excluded", n));
+  const row = el("div", "row no-print"); row.style.marginTop = "10px";
+  const pr = el("button", null, "Print / save PDF"); pr.onclick = () => window.print();
+  const js = el("button", null, "Download JSON"); js.onclick = () => {
+    const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([JSON.stringify(quote, null, 2)], { type: "application/json" }));
+    a.download = quote.quote_id + ".json"; a.click();
+  };
+  const em = el("button", null, "Copy buyer email"); em.onclick = async () => {
+    const e = rfq.clarification_email; try { await navigator.clipboard.writeText(e ? `Subject: ${e.subject}\n\n${e.body}` : "No open questions."); em.textContent = "Copied"; } catch { em.textContent = "Copy failed"; }
+  };
+  row.append(el("span", "hint", ""), em, js, pr); c.append(row);
+  return c;
+}
+
+function emptyCard() {
+  const c = el("div", "card empty");
+  c.append(el("b", null, "No RFQ yet"), "Paste an RFQ into the dialogue, upload a PDF, spreadsheet or email, or try a sample.");
+  const s = el("div", "samples");
+  ["RFQ-01", "RFQ-02", "RFQ-03", "RFQ-04"].forEach((id) => {
+    const b = el("button", null, "Sample " + id); b.onclick = () => startRFQ(() => api("POST", "/v1/samples/" + id), `Run sample ${id}`); s.append(b);
+  });
+  c.append(s); return c;
+}
+
+// ---------- input ----------
+$("#composer").addEventListener("submit", (e) => { e.preventDefault(); send(); });
+$("#input").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); } });
+function send() {
+  const text = $("#input").value.trim();
+  if (!text || busy) return;
+  $("#input").value = "";
+  const q = openQuestions()[0];
+  if (q && text.toLowerCase() !== "new") return answer(q, text);
+  if (text.toLowerCase() === "new") { rfq = null; quote = null; render(); updateContext(); say("Ready for a new RFQ."); return; }
+  startRFQ(() => api("POST", "/v1/rfqs", { text }), text);
+}
+$("#file").addEventListener("change", () => {
+  const f = $("#file").files[0]; if (!f) return;
+  const fd = new FormData(); fd.append("file", f);
+  startRFQ(() => api("POST", "/v1/rfqs/upload", fd, true), `Uploaded ${f.name}`);
+  $("#file").value = "";
+});
+
+(async () => {
+  try {
+    const h = await api("GET", "/v1/health");
+    $("#health").textContent = `backend ok · LLM: ${h.llm.active === "rules" ? "rules only" : h.llm.model} · PRISM: ${h.prism.enabled ? "on" : "local log"}`;
+  } catch { $("#health").textContent = "backend not reachable"; }
+  say("Hi. Paste an RFQ or upload a file (PDF, spreadsheet, email). I'll match every line to our catalog, price it against the market, check compliance, and ask about anything unclear.");
+  render(); updateContext();
+})();
+</script>
+</body>
+</html>

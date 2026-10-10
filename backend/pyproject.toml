@@ -1,0 +1,22 @@
+[project]
+name = "rudco-rfq-backend"
+version = "0.1.0"
+description = "RFQ to Quote agent backend for the RudCo hackathon track"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi",
+  "uvicorn[standard]",
+  "python-multipart",
+  "openpyxl",
+  "pdfplumber",
+  "openai",
+  "httpx",
+  "anthropic>=1.13.0",
+]
+
+[dependency-groups]
+dev = ["pytest"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
