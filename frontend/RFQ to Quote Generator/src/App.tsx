@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import Assistant from "./Assistant";
 import Example from "./Example";
 import Icon, { type IconName } from "./Icon";
+import Reasoning from "./Reasoning";
 import { api, ApiError, money, type Line, type Quote, type RFQ } from "./api";
 
 const nav = [
@@ -50,6 +51,7 @@ function App() {
   const [dragOver, setDragOver] = useState(false);
   const [pending, setPending] = useState<{ name: string; started: number } | null>(null);  // file being analyzed
   const [elapsed, setElapsed] = useState(0);
+  const [stage, setStage] = useState(4);   // pipeline steps completed (0-4); animates 1 -> 4 after a response
   const fileInput = useRef<HTMLInputElement>(null);
   const say = (text: string) => setMessage((m) => ({ id: (m?.id || 0) + 1, text }));
 
@@ -60,6 +62,11 @@ function App() {
     const t = setInterval(() => setElapsed((Date.now() - pending.started) / 1000), 200);
     return () => clearInterval(t);
   }, [pending]);
+  useEffect(() => {   // after the response: walk the steps, each revealing its real results
+    if (stage >= 4) return;
+    const t = setTimeout(() => setStage((n) => n + 1), 900);
+    return () => clearTimeout(t);
+  }, [stage]);
   useEffect(() => {
     if (!dropOpen) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setDropOpen(false); };
@@ -106,7 +113,7 @@ function App() {
     finally { setPending(null); }
     setFileName(file.name);
     setFileUrl((old) => { if (old) URL.revokeObjectURL(old.url); return { url: URL.createObjectURL(file), type: file.type || "" }; });
-    setRfq(r); setQuote(null); setAnswers({});
+    setRfq(r); setQuote(null); setAnswers({}); setStage(1);
     setSelectedLine((r.lines.find((l) => l.clarifications.length) || r.lines[0])?.id || null);
     setActiveTab("Line items");
     announce(r);
@@ -152,7 +159,8 @@ function App() {
   const steps: [string, string, IconName, boolean][] = pending ? [] : rfq ? [
     [rfq.gateway?.vision_model ? "Read image & parse" : "Parse & normalize",
       rfq.gateway?.vision_model
-        ? `Vision ${((rfq.gateway.vision_latency_ms || 0) / 1000).toFixed(1)}s + extract ${((rfq.gateway.extract_latency_ms || 0) / 1000).toFixed(1)}s`
+        ? (rfq.gateway.extract_latency_ms ? `Vision ${((rfq.gateway.vision_latency_ms || 0) / 1000).toFixed(1)}s + extract ${(rfq.gateway.extract_latency_ms / 1000).toFixed(1)}s`
+            : `Read and extracted in one call · ${((rfq.gateway.vision_latency_ms || rfq.gateway.latency_ms || 0) / 1000).toFixed(1)}s`)
         : `${rfq.gateway?.model || rfq.parser_mode}${rfq.gateway?.latency_ms ? ` · ${(rfq.gateway.latency_ms / 1000).toFixed(1)}s` : ""}`, "check", true],
     ["Catalog matching", `${lines.filter((l) => l.match).length} of ${lines.length} matched`, "check", lines.some((l) => l.match)],
     ["Compliance", `${lines.filter((l) => l.compliance.status === "pass").length} pass · ${lines.filter((l) => l.compliance.status === "blocked").length} blocked`, "shield", lines.some((l) => l.compliance.status !== "not_evaluated")],
@@ -240,15 +248,21 @@ function App() {
           )}
           {rfq && !pending && (
             <section className="pipeline" aria-label="RFQ processing progress">
-              {steps.map(([t, sub, icon, done], index) => (
-                <div className={`pipeline-step ${done && (index === 4 || !steps[index + 1]?.[3]) ? "current" : ""}`} key={t}>
-                  <div className="step-icon"><Icon name={icon} size={16} /></div>
-                  <div><strong>{t}</strong><span>{sub}</span></div>
-                  {index < 4 && <div className="connector" />}
-                </div>
-              ))}
+              {steps.map(([t, sub, icon], index) => {
+                const state = index < stage ? (index === 4 && !quote ? "current" : "done")
+                  : index === stage && index < 4 ? "active" : index === 4 ? (quote ? "done" : "current") : "waiting";
+                return (
+                  <div className={`pipeline-step ${state}`} key={t}>
+                    <div className="step-icon">{state === "active" ? <span className="step-spinner" /> : state === "done" ? <Icon name="check" size={16} /> : <Icon name={icon} size={16} />}</div>
+                    <div><strong>{t}</strong><span>{state === "waiting" ? "Waiting" : state === "active" ? "Working…" : sub}</span></div>
+                    {index < 4 && <div className="connector" />}
+                  </div>
+                );
+              })}
+              {stage < 4 && <div className="pipeline-progress" />}
             </section>
           )}
+          {(pending || rfq) && <Reasoning rfq={pending ? null : rfq} stage={stage} pending={pending} elapsed={elapsed} model={model} />}
 
           <div className="content-grid">
             <section className="work-panel">
