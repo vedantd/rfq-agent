@@ -19,7 +19,8 @@ PORT=5173 pnpm dev          # http://localhost:5173
 
 | Area | State |
 |---|---|
-| Paste RFQ / Browse files / drag-drop | Live: `POST /v1/rfqs`, `POST /v1/rfqs/upload` |
+| Default screen | Shuang's original design with its example data (`src/Example.tsx`), until **New RFQ** or an upload |
+| Paste RFQ / Browse files / drag-drop | Live: `POST /v1/rfqs`, `POST /v1/rfqs/upload` - **any file**: PDF (scans too), photos/screenshots, .docx, .xlsx, CSV, email, text. Images and scanned PDFs are transcribed by Nicrron's vision model first (`ai/gateway.py: transcribe_images`) |
 | Line table, status chips, pipeline steps | Live from the RFQ response (no confidence % in the API, so the column shows status) |
 | Needs-your-attention card | Live: clarification questions with answer inputs -> `PATCH .../lines/{id}` |
 | Approve ready lines / Draft quote | Live: `.../approve`, `.../quotes/draft` (draft only after every line is approved) |

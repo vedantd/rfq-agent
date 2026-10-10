@@ -1,55 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import Assistant from "./Assistant";
+import Example from "./Example";
+import Icon, { type IconName } from "./Icon";
 import { api, ApiError, money, type Line, type Quote, type RFQ } from "./api";
-
-type IconName =
-  | "activity"
-  | "arrow"
-  | "check"
-  | "chevron"
-  | "clock"
-  | "cube"
-  | "document"
-  | "download"
-  | "grid"
-  | "inbox"
-  | "layers"
-  | "more"
-  | "plus"
-  | "search"
-  | "shield"
-  | "spark"
-  | "upload"
-  | "user";
-
-const paths: Record<IconName, React.ReactNode> = {
-  activity: <><path d="M3 12h4l2.3-6 4.2 12 2.2-6H21" /></>,
-  arrow: <><path d="M5 12h14M13 6l6 6-6 6" /></>,
-  check: <><path d="m5 12 4 4L19 6" /></>,
-  chevron: <><path d="m9 18 6-6-6-6" /></>,
-  clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
-  cube: <><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9L12 3Z" /><path d="m4.2 7.5 7.8 4.4 7.8-4.4M12 21v-9.1" /></>,
-  document: <><path d="M6 3h8l4 4v14H6z" /><path d="M14 3v5h5M9 13h6M9 17h5" /></>,
-  download: <><path d="M12 3v12m0 0 5-5m-5 5-5-5M5 21h14" /></>,
-  grid: <><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /></>,
-  inbox: <><path d="M4 5h16v14H4z" /><path d="m4 13 4-3h8l4 3M8 14h8" /></>,
-  layers: <><path d="m12 3 9 5-9 5-9-5 9-5Z" /><path d="m3 12 9 5 9-5M3 16l9 5 9-5" /></>,
-  more: <><circle cx="5" cy="12" r="1" fill="currentColor" /><circle cx="12" cy="12" r="1" fill="currentColor" /><circle cx="19" cy="12" r="1" fill="currentColor" /></>,
-  plus: <><path d="M12 5v14M5 12h14" /></>,
-  search: <><circle cx="11" cy="11" r="7" /><path d="m16 16 5 5" /></>,
-  shield: <><path d="M12 3 20 6v5c0 5-3.4 8.3-8 10-4.6-1.7-8-5-8-10V6l8-3Z" /><path d="m8.5 12 2.2 2.2 4.8-5" /></>,
-  spark: <><path d="m12 3 1.4 4.1L17.5 8.5l-4.1 1.4L12 14l-1.4-4.1-4.1-1.4 4.1-1.4L12 3ZM18.5 14l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2Z" /></>,
-  upload: <><path d="M12 16V4m0 0L7 9m5-5 5 5M5 14v6h14v-6" /></>,
-  user: <><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></>,
-};
-
-function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      {paths[name]}
-    </svg>
-  );
-}
 
 const nav = [
   { label: "Overview", icon: "grid" as IconName },
@@ -98,6 +51,7 @@ function App() {
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [model, setModel] = useState<string>("");
   const [message, setMessage] = useState<{ id: number; text: string } | null>(null);
+  const [composing, setComposing] = useState(false);   // false + no RFQ = Shuang's example screen
   const fileInput = useRef<HTMLInputElement>(null);
   const say = (text: string) => setMessage((m) => ({ id: (m?.id || 0) + 1, text }));
 
@@ -134,7 +88,7 @@ function App() {
   const process = (file?: File) => run(file ? `Reading ${file.name}…` : "Reading the RFQ…", async () => {
     const r = file ? await api.uploadRfq(file, buyer || "buyer") : await api.createRfq(sourceText, buyer || "buyer", undefined, "email");
     if (file) setFileName(file.name);
-    setRfq(r); setQuote(null); setAnswers({});
+    setRfq(r); setQuote(null); setAnswers({}); setComposing(false);
     setSelectedLine((r.lines.find((l) => l.clarifications.length) || r.lines[0])?.id || null);
     setActiveTab("Line items");
     announce(r);
@@ -175,7 +129,7 @@ function App() {
     say("I copied the clarification email to your clipboard. It's a draft only; nothing was sent.");
   });
 
-  const reset = () => { setRfq(null); setQuote(null); setFileName(null); setError(null); setSelectedLine(null); say("Ready for a new RFQ. Paste it or drop a file."); };
+  const reset = () => { setRfq(null); setQuote(null); setFileName(null); setError(null); setSelectedLine(null); setComposing(true); say("Ready for a new RFQ. Paste it, or drop any file: PDF, photo, spreadsheet, Word or email."); };
 
   const steps: [string, string, IconName, boolean][] = rfq ? [
     ["Parse & normalize", `${rfq.gateway?.model || rfq.parser_mode}${rfq.gateway?.latency_ms ? ` · ${(rfq.gateway.latency_ms / 1000).toFixed(1)}s` : ""}`, "check", true],
@@ -223,14 +177,18 @@ function App() {
 
       <main className="main">
         <header className="topbar">
-          <div className="breadcrumb"><span>RFQ Inbox</span><Icon name="chevron" size={14} /><strong>{rfq ? rfq.rfq_id : "New RFQ"}</strong></div>
+          <div className="breadcrumb"><span>RFQ Inbox</span><Icon name="chevron" size={14} /><strong>{rfq ? rfq.rfq_id : composing ? "New RFQ" : "RFQ-1048"}</strong></div>
           <div className="top-actions">
-            <div className="search-box"><Icon name="search" size={16} /><span>{model ? `Model: ${model}` : "API not reachable"}</span></div>
+            <div className="search-box" title={model ? `AI gateway model: ${model}` : "QuotePilot API not reachable"}><Icon name="search" size={16} /><span>Search catalog</span><kbd>⌘ K</kbd></div>
+            <button className="icon-button" aria-label="Activity" onClick={() => rfq && setActiveTab("Activity")}><Icon name="activity" /></button>
             <button className="primary-button" onClick={reset}><Icon name="plus" size={16} />New RFQ</button>
           </div>
         </header>
 
         <div className="workspace">
+          {!rfq && !composing ? (
+            <Example assistant={<Assistant message={message} />} onNew={reset} />
+          ) : (<>
           <section className="title-row">
             <div>
               <div className="eyebrow"><span className="status-pulse" />{busy ? busy.toUpperCase() : rfq ? rfq.status.replace(/_/g, " ").toUpperCase() : "WAITING FOR AN RFQ"}</div>
@@ -364,11 +322,12 @@ function App() {
               </div>
             </aside>
           </div>
+          </>)}
 
           <section className="upload-strip" onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) process(f); }}>
-            <input ref={fileInput} type="file" accept=".pdf,.csv,.xlsx,.eml,.txt" onChange={(e) => { const f = e.target.files?.[0]; if (f) process(f); e.target.value = ""; }} />
+            <input ref={fileInput} type="file" onChange={(e) => { const f = e.target.files?.[0]; if (f) process(f); e.target.value = ""; }} />
             <div className="upload-icon"><Icon name="upload" size={17} /></div>
-            <div><strong>{rfq ? "Have another RFQ?" : "Or upload a file"}</strong><span>Drop a PDF, CSV, spreadsheet, or email here</span></div>
+            <div><strong>{rfq ? "Have another RFQ?" : composing ? "Or upload a file" : "Have another RFQ?"}</strong><span>Drop any file here: PDF, photo or screenshot, spreadsheet, Word, CSV or email</span></div>
             <button className="secondary-button" onClick={() => fileInput.current?.click()} disabled={!!busy}>Browse files</button>
           </section>
         </div>

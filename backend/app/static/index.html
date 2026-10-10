@@ -172,10 +172,11 @@ async function initAvatar() {
   let man;
   try { const r = await fetch("/avatar/manifest.json"); if (!r.ok) return; man = await r.json(); } catch { return; }
   const VIEW = man.view || [230, 150, 790, 710];           // part of the base shown in the portrait
-  const vw = VIEW[2] - VIEW[0], pct = (v) => (v / vw * 100) + "%";
+  const vw = VIEW[2] - VIEW[0], vh = VIEW[3] - VIEW[1];
+  const pct = (v) => (v / vw * 100) + "%", pctH = (v) => (v / vh * 100) + "%";   // heights are % of the portrait's height
   const slot = $("#avatarSlot");
   const portrait = el("div", "portrait"), stage = el("div", "stage");
-  Object.assign(stage.style, { width: pct(man.width), height: pct(man.height), left: pct(-VIEW[0]), top: pct(-VIEW[1]) });
+  Object.assign(stage.style, { width: pct(man.width), height: pctH(man.height), left: pct(-VIEW[0]), top: pctH(-VIEW[1]) });
   const base = el("img"); base.src = "/avatar/base.webp"; base.alt = "";
   Object.assign(base.style, { left: 0, top: 0, width: "100%", height: "100%" });
   stage.append(base);

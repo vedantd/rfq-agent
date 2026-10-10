@@ -88,7 +88,7 @@ export default function Assistant({ message }: { message: { id: number; text: st
     <div className="assistant-card">
       <div className="assistant-portrait" style={{ aspectRatio: `${vw} / ${vh}` }}>
         {man && (
-          <div className="assistant-stage" style={{ width: pct(man.width, vw), height: pct(man.height, vw), left: pct(-view[0], vw), top: pct(-view[1], vw) }}>
+          <div className="assistant-stage" style={{ width: pct(man.width, vw), height: pct(man.height, vh), left: pct(-view[0], vw), top: pct(-view[1], vh) }}>
             <img src="/avatar/base.webp" alt="" style={{ left: 0, top: 0, width: "100%", height: "100%" }} />
             {Object.entries(man.gestures || {}).map(([n, l]) => layer(n, l, "assistant-gesture", gesture === n))}
             {Object.entries(man.patches).filter(([n]) => n !== "blink").map(([n, l]) => layer(n, l, "assistant-patch", mouth === n))}

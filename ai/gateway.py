@@ -81,9 +81,9 @@ def gateway_auth() -> tuple[str,str]:
     return base, api_key
 
 
-def _completion(messages: list[dict[str,str]], *, max_tokens: int = 2200) -> tuple[str, str, int]:
+def _completion(messages: list[dict[str, Any]], *, max_tokens: int = 2200, model: str | None = None) -> tuple[str, str, int]:
     base, api_key = gateway_auth()
-    model = os.getenv("NICRRON_MODEL", DEFAULT_MODEL)
+    model = model or os.getenv("NICRRON_MODEL", DEFAULT_MODEL)
     start = time.monotonic()
     try:
         # This executes a REAL HTTPS request to the Nicrron API gateway.
@@ -111,6 +111,23 @@ def _completion(messages: list[dict[str,str]], *, max_tokens: int = 2200) -> tup
     if not isinstance(content, str) or not content.strip():
         raise GatewayResponseError("Gateway returned no assistant text")
     return content, real_model, elapsed
+
+TRANSCRIBE_PROMPT = """You transcribe images of industrial purchase requests (photos, screenshots, scanned forms).
+Write out ALL the text you can read, exactly as written, line by line, keeping each requested item on its own line
+with its quantity. Keep abbreviations and numbers exactly as shown. Do not correct, summarize, explain or add anything.
+If something is unreadable write [unreadable]. Output plain text only."""
+
+
+def transcribe_images(images: list[tuple[bytes, str]]) -> tuple[str, str, int]:
+    """Read the text off RFQ images (photos, screenshots, scanned PDF pages) with a vision model.
+    The transcript then goes through the normal grounded extraction, so every field must still quote it."""
+    import base64
+    content: list[dict[str, Any]] = [{"type": "text", "text": "Transcribe this RFQ."}]
+    for data, mime in images:
+        content.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"}})
+    return _completion([{"role": "system", "content": TRANSCRIBE_PROMPT}, {"role": "user", "content": content}],
+                       max_tokens=3000, model=os.getenv("NICRRON_VISION_MODEL", "anthropic/claude-sonnet-5"))
+
 
 def test_connection() -> dict:
     response, model, latency = _completion([
