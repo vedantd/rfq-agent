@@ -2,7 +2,7 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 from app import app
-import gateway
+from ai import gateway
 
 SAMPLE = 'Need 20 sheets 304 SS 16ga 4x8, mill certs required. Also 10 sheets stainless 1/8 inch.'
 H = {'X-API-Key':'rudco-demo-key'}

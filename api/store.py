@@ -1,6 +1,6 @@
 """Local SQLite persistence with per-tenant record scoping."""
 import json, os, sqlite3
-from engine import sample_catalog
+from ai.engine import sample_catalog
 
 
 def connection():

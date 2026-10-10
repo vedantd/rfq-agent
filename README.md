@@ -2,7 +2,40 @@
 
 **Built for Track 2 (RudCo): RFQ → Quote.** The model calls are **real**, made from Python FastAPI over HTTPS via Nicrron's OpenAI-compatible gateway. **No simulated model responses, rule-only fallback, or client-side secrets.** Missing credentials, API failures, invalid model JSON, or ungrounded model responses result in visible 503/502 errors.
 
-This is a hackathon-grade integration, not a production-ready quoting platform. The frontend is one file: `static/index.html` (HTML + CSS + vanilla JS, no npm required). The existing supplier catalog and benchmark values are explicitly **synthetic seeded examples**; customer-ready pricing needs sourced live supplier data.
+This is a hackathon-grade integration, not a production-ready quoting platform. The frontend is one file: [`frontend/index.html`](frontend/index.html) (HTML + CSS + vanilla JS, no npm required). The existing supplier catalog and benchmark values are explicitly **synthetic seeded examples**; customer-ready pricing needs sourced live supplier data.
+
+## Repo layout (who edits what)
+
+```
+api/                 FastAPI routes, auth, SQLite          → docs/api.md
+ai/                  Nicrron gateway + match/price engine  → docs/ai.md
+frontend/            Single-page UI                        → docs/frontend.md
+docs/                Party context from product requirements
+rudco_demo_data/     Synthetic eval dataset (not runtime seed)
+tests/               API tests (network stubbed only in tests)
+examples/            Live smoke scripts
+app.py               Thin entrypoint: uvicorn app:app
+```
+
+Start with [docs/README.md](docs/README.md). Each folder also has a short `README.md` pointing at the right doc.
+
+## Team guardrails
+
+These keep parallel work from breaking the demo. Full detail is in the party docs.
+
+| Rule | Applies to |
+|---|---|
+| Nicrron key only in local `.env` — never in HTML/JS or commits | Everyone |
+| No fake model success path when Nicrron fails (503/502 only) | API, AI |
+| Frontend may redesign visuals freely, but must keep calling the existing `/v1/*` contract with `X-API-Key` | Frontend |
+| Keep required DOM ids and API paths listed in [docs/frontend.md](docs/frontend.md) unless API + frontend agree on a breaking change | Frontend |
+| Do not recompute match/price/compliance in the browser — server response is source of truth | Frontend |
+| Clarifications re-run `engine.analyze_line` only (no second model call) | API, AI |
+| Quote draft stays blocked until every line is approved; synthetic prices → `demo_draft` | API, Frontend |
+| Breaking response field renames need a heads-up + test update | API, AI |
+| `pytest -q` must stay green before merge | Everyone |
+
+Swagger at `/docs` is the live contract. If frontend and backend disagree, the OpenAPI schema and [docs/frontend.md](docs/frontend.md) win over ad-hoc UI experiments.
 
 ## Setup (macOS/Linux/Windows with bash)
 
@@ -83,7 +116,7 @@ The response contains `parser_mode: nicrron_live` and `gateway: {mode: live_gate
 
 ## Design/implementation decisions
 
-- **Actual gateway connection:** `gateway.py` makes an authenticated `httpx` POST to `https://api.nicrron.ai/v1/chat/completions` with your bearer key, model name and chat messages. Direct REST avoids the OpenAI SDK dependency. No remote response is fabricated.
+- **Actual gateway connection:** [`ai/gateway.py`](ai/gateway.py) makes an authenticated `httpx` POST to `https://api.nicrron.ai/v1/chat/completions` with your bearer key, model name and chat messages. Direct REST avoids the OpenAI SDK dependency. No remote response is fabricated.
 - **Structured extraction:** Prompt requires a `lines` JSON object. Pydantic validates fields and checks each `raw_text` is an exact substring of the original RFQ. Deterministic parsing is used as a verification and normalization layer, not as an alternative model provider.
 - **Uncertainty:** Missing specs result in `needs_clarification`, not guessed attributes; wrong standards or no verified catalog SKU block matching.
 - **Pricing:** Supplier cost × (1 + configurable fixed markup), with explicit synthetic benchmark source and price explanation. No unsupported live market claims.

@@ -8,7 +8,7 @@ from typing import Any
 
 import httpx
 from pydantic import BaseModel, Field, ValidationError
-from engine import extract_rule_line
+from ai.engine import extract_rule_line
 
 DEFAULT_BASE_URL = "https://api.nicrron.ai/v1"
 DEFAULT_MODEL = "nicrron/auto"
