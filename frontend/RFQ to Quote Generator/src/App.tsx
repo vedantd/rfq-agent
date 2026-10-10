@@ -89,6 +89,7 @@ function App() {
   }
 
   const process = (file?: File) => run(file ? `Reading ${file.name}…` : "Reading the RFQ…", async () => {
+    setComposing(true);   // leave the example screen at once so progress and errors are visible
     const r = file ? await api.uploadRfq(file, buyer || "buyer") : await api.createRfq(sourceText, buyer || "buyer", undefined, "email");
     if (file) {
       setFileName(file.name);
@@ -195,6 +196,7 @@ function App() {
         </header>
 
         <div className="workspace">
+          {error && !rfq && !composing && <div className="api-error" role="alert"><strong>Error</strong> {error}</div>}
           {!rfq && !composing ? (
             <Example assistant={<Assistant message={message} />} onNew={reset} />
           ) : (<>
@@ -241,7 +243,7 @@ function App() {
                   <label htmlFor="raw-rfq">RFQ text</label>
                   <textarea id="raw-rfq" rows={8} value={sourceText} onChange={(e) => setSourceText(e.target.value)} />
                   <div className="intake-actions">
-                    <span>{busy || "Runs live extraction through the Nicrron gateway, then catalog, pricing and compliance."}</span>
+                    <span>{busy ? `${busy} This takes 5–20 seconds.` : "Runs live extraction through the Nicrron gateway, then catalog, pricing and compliance."}</span>
                     <button className="primary-button" onClick={() => process()} disabled={!!busy || sourceText.trim().length < 4}><Icon name="spark" size={15} />Process RFQ</button>
                   </div>
                 </div>
