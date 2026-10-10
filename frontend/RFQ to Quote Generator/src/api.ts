@@ -40,7 +40,11 @@ export interface RFQ {
   buyer_email?: string | null;
   status: "needs_clarification" | "review_required" | "approved";
   parser_mode: string;
-  gateway: { gateway?: string; model?: string; latency_ms?: number; validation?: string } | null;
+  gateway: {
+    gateway?: string; model?: string; latency_ms?: number; validation?: string;
+    // present when the upload was an image: transcribed by a vision model first (api/app.py create_rfq)
+    vision_model?: string; vision_latency_ms?: number; extract_latency_ms?: number; source?: string;
+  } | null;
   line_count: number;
   ready_for_approval: number;
   needs_clarification: number;

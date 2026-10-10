@@ -203,23 +203,48 @@ def _evidenced(raw: str, field: str, value: Any, evidence: dict[str,str]) -> boo
     return True
 
 
+def _squash(s: str) -> str:
+    return ' '.join(s.split())
+
+
+def _tokens(s: str) -> list[str]:
+    return re.findall(r"[A-Za-z0-9][A-Za-z0-9.\-/#]*", s.upper())
+
+
 def extract_live(text: str) -> tuple[list[dict], dict]:
     raw_json, model, latency_ms = _completion([
         {"role":"system", "content":SYSTEM_PROMPT},
         {"role":"user", "content":text},
-    ], max_tokens=2800)
+    ], max_tokens=int(os.getenv("NICRRON_EXTRACT_MAX_TOKENS", "8000")))   # 2800 ran out on 8-line RFQs (finish_reason=length)
     try:
         result = Extraction.model_validate(_parse_json(raw_json))
     except (ValidationError, ValueError) as exc:
         raise GatewayResponseError("Model output failed schema validation: " + str(exc)[:220]) from exc
 
     lines: list[dict] = []
+    source_squashed = _squash(text)
+    source_tokens = set(_tokens(text))
     for idx, proposed in enumerate(result.lines, start=1):
         raw = proposed.raw_text.strip()
-        if raw not in text:
-            raise GatewayResponseError(f"Line {idx} has no exact supporting substring in the source RFQ")
+        # PDF text layers break table cells across lines/columns, so the model's joined line is often not one
+        # exact substring. Accept it when it matches ignoring whitespace, or when every word in it appears in
+        # the source (the model only re-joined words, it added none).
+        if raw in text or _squash(raw) in source_squashed:
+            grounding = 'exact'
+        elif _tokens(raw) and set(_tokens(raw)) <= source_tokens:
+            grounding = 'words_in_source'
+        else:
+            # Can't verify this line: keep it visible for review, but trust nothing extracted from it.
+            item = extract_rule_line(raw, idx)
+            for f in ('material', 'form', 'grade', 'thickness_in', 'width_in', 'length_in', 'quantity', 'standard_required'):
+                item[f] = None
+            item['extraction_source'] = 'nicrron_live_unverified'
+            item['grounding'] = 'not_found_in_source'
+            lines.append(item)
+            continue
         # Start with deterministic extraction; accept LLM supplements ONLY if explicitly evidenced.
         item = extract_rule_line(raw, idx)
+        item['grounding'] = grounding
         candidate = proposed.model_dump()
         for field in ('material', 'form', 'grade', 'thickness_in', 'width_in', 'length_in',
                       'quantity', 'standard_required', 'country_of_origin_required'):

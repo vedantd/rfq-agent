@@ -44,6 +44,7 @@ function App() {
   const [quote, setQuote] = useState<Quote | null>(null);
   const [selectedLine, setSelectedLine] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
+  const [fileUrl, setFileUrl] = useState<{ url: string; type: string } | null>(null);   // local preview of the upload
   const [sourceText, setSourceText] = useState(SAMPLE);
   const [buyer, setBuyer] = useState("Northline Fabrication");
   const [busy, setBusy] = useState<string | null>(null);
@@ -69,7 +70,9 @@ function App() {
     const pricedNow = r.lines.filter((l) => l.pricing);
     const total = pricedNow.reduce((s, l) => s + (l.pricing?.line_total_usd || 0), 0);
     const q = r.lines.filter((l) => l.clarifications.length);
-    let t = `I read ${r.line_count} line${r.line_count === 1 ? "" : "s"} and priced ${pricedNow.length}, for ${money(total)}.`;
+    const g = r.gateway;
+    let t = g?.vision_model ? `I read your image with ${g.vision_model} in ${((g.vision_latency_ms || 0) / 1000).toFixed(1)} seconds, then extracted the lines. ` : "";
+    t += `I found ${r.line_count} line${r.line_count === 1 ? "" : "s"} and priced ${pricedNow.length}, for ${money(total)}.`;
     if (q.length) t += ` Before I can quote the rest I need answers on ${q.length} line${q.length > 1 ? "s" : ""}. ${q[0].clarifications.map((c) => c.question).join(" ")}`;
     else t += " Nothing is unclear, so approve the lines and I'll draft the quote.";
     say(t);
@@ -87,7 +90,10 @@ function App() {
 
   const process = (file?: File) => run(file ? `Reading ${file.name}…` : "Reading the RFQ…", async () => {
     const r = file ? await api.uploadRfq(file, buyer || "buyer") : await api.createRfq(sourceText, buyer || "buyer", undefined, "email");
-    if (file) setFileName(file.name);
+    if (file) {
+      setFileName(file.name);
+      setFileUrl((old) => { if (old) URL.revokeObjectURL(old.url); return { url: URL.createObjectURL(file), type: file.type || "" }; });
+    } else setFileUrl(null);
     setRfq(r); setQuote(null); setAnswers({}); setComposing(false);
     setSelectedLine((r.lines.find((l) => l.clarifications.length) || r.lines[0])?.id || null);
     setActiveTab("Line items");
@@ -132,7 +138,10 @@ function App() {
   const reset = () => { setRfq(null); setQuote(null); setFileName(null); setError(null); setSelectedLine(null); setComposing(true); say("Ready for a new RFQ. Paste it, or drop any file: PDF, photo, spreadsheet, Word or email."); };
 
   const steps: [string, string, IconName, boolean][] = rfq ? [
-    ["Parse & normalize", `${rfq.gateway?.model || rfq.parser_mode}${rfq.gateway?.latency_ms ? ` · ${(rfq.gateway.latency_ms / 1000).toFixed(1)}s` : ""}`, "check", true],
+    [rfq.gateway?.vision_model ? "Read image & parse" : "Parse & normalize",
+      rfq.gateway?.vision_model
+        ? `Vision ${((rfq.gateway.vision_latency_ms || 0) / 1000).toFixed(1)}s + extract ${((rfq.gateway.extract_latency_ms || 0) / 1000).toFixed(1)}s`
+        : `${rfq.gateway?.model || rfq.parser_mode}${rfq.gateway?.latency_ms ? ` · ${(rfq.gateway.latency_ms / 1000).toFixed(1)}s` : ""}`, "check", true],
     ["Catalog matching", `${lines.filter((l) => l.match).length} of ${lines.length} matched`, "check", lines.some((l) => l.match)],
     ["Compliance", `${lines.filter((l) => l.compliance.status === "pass").length} pass · ${lines.filter((l) => l.compliance.status === "blocked").length} blocked`, "shield", lines.some((l) => l.compliance.status !== "not_evaluated")],
     ["Price benchmark", priced.length ? `${priced.length} priced vs benchmark` : "Waiting on matches", "activity", priced.length > 0],
@@ -262,8 +271,11 @@ function App() {
                 </>
               ) : activeTab === "Source document" ? (
                 <div className="document-preview">
-                  <div className="file-card"><Icon name="document" size={30} /><div><strong>{fileName || "Pasted RFQ text"}</strong><span>{rfq.parser_mode}</span></div></div>
+                  <div className="file-card"><Icon name="document" size={30} /><div><strong>{fileName || "Pasted RFQ text"}</strong><span>{rfq.gateway?.vision_model ? `Image read by ${rfq.gateway.vision_model}` : rfq.parser_mode}</span></div>
+                    {fileUrl && <a className="secondary-button" href={fileUrl.url} target="_blank" rel="noreferrer">Open document</a>}</div>
                   {!fileName && <pre className="source-text">{sourceText}</pre>}
+                  {fileUrl?.type.startsWith("image/") && <img className="source-image" src={fileUrl.url} alt={`Uploaded RFQ ${fileName}`} />}
+                  {fileUrl?.type === "application/pdf" && <iframe className="source-pdf" src={fileUrl.url} title={`Uploaded RFQ ${fileName}`} />}
                 </div>
               ) : (
                 <div className="activity-list">
@@ -325,9 +337,9 @@ function App() {
           </>)}
 
           <section className="upload-strip" onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) process(f); }}>
-            <input ref={fileInput} type="file" onChange={(e) => { const f = e.target.files?.[0]; if (f) process(f); e.target.value = ""; }} />
+            <input ref={fileInput} type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.gif,.xlsx,.csv,.eml,.txt" onChange={(e) => { const f = e.target.files?.[0]; if (f) process(f); e.target.value = ""; }} />
             <div className="upload-icon"><Icon name="upload" size={17} /></div>
-            <div><strong>{rfq ? "Have another RFQ?" : composing ? "Or upload a file" : "Have another RFQ?"}</strong><span>Drop any file here: PDF, photo or screenshot, spreadsheet, Word, CSV or email</span></div>
+            <div><strong>{rfq ? "Have another RFQ?" : composing ? "Or upload a file" : "Have another RFQ?"}</strong><span>Drop a PDF, photo or screenshot (PNG/JPG/WebP/GIF), spreadsheet, CSV or email here</span></div>
             <button className="secondary-button" onClick={() => fileInput.current?.click()} disabled={!!busy}>Browse files</button>
           </section>
         </div>

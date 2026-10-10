@@ -356,13 +356,16 @@ def analyze_line(line: dict, catalog: list[dict] = None, markup: float = 0.225) 
     }
     
     # Calculate pricing using database benchmarks
-    supplier_cost = _parse_price(it.get('unit_price', 0))
+    # Dataset SKUs carry `unit_price`; the original seed SKUs carry `supplier_cost_usd` / `benchmark_usd`.
+    supplier_cost = _parse_price(it.get('unit_price') or it.get('supplier_cost_usd') or 0)
     unit = money(supplier_cost * (1 + markup))
     benchmark_record = database.find_benchmark(it.get('benchmark_id'))
     bench = None
     if benchmark_record:
         # Benchmark is stored as price_per_unit (not per_lb), so use directly
         bench = money(float(benchmark_record.get('median_per_lb', 0)))
+    elif it.get('benchmark_usd'):
+        bench = money(float(it['benchmark_usd']))
     
     line['pricing'] = {
         'supplier_cost_usd': supplier_cost,
