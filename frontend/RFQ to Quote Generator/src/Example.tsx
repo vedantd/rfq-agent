@@ -37,7 +37,7 @@ export default function Example({ assistant, onNew }: { assistant: ReactNode; on
           ["Price benchmark", "Within market range", "activity"],
           ["Quote ready", "Draft generated", "spark"],
         ].map(([title, sub, icon], index) => (
-          <div className={`pipeline-step ${index === 4 ? "current" : ""}`} key={title}>
+          <div className="pipeline-step" key={title}>
             <div className="step-icon"><Icon name={icon as IconName} size={16} /></div>
             <div><strong>{title}</strong><span>{sub}</span></div>
             {index < 4 && <div className="connector" />}

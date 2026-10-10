@@ -4,6 +4,7 @@ import Example from "./Example";
 import Icon, { type IconName } from "./Icon";
 import Reasoning from "./Reasoning";
 import QuoteReport from "./QuoteReport";
+import ReviewModal from "./ReviewModal";
 import { api, ApiError, money, type Line, type Quote, type RFQ } from "./api";
 
 const nav = [
@@ -55,7 +56,9 @@ function App() {
   const [elapsed, setElapsed] = useState(0);
   const [stage, setStage] = useState(4);
   const [analyzing, setAnalyzing] = useState(false);
-  const [reportOpen, setReportOpen] = useState(false);   // final quote report pop-up   // between the extract call and the analyze call   // pipeline steps completed (0-4); animates 1 -> 4 after a response
+  const [reportOpen, setReportOpen] = useState(false);   // final quote report pop-up
+  const [reviewOpen, setReviewOpen] = useState(false);   // summary + questions pop-up at Quote ready
+  const [reviewDue, setReviewDue] = useState(false);     // open the review once the pipeline reaches Quote ready   // between the extract call and the analyze call   // pipeline steps completed (0-4); animates 1 -> 4 after a response
   const fileInput = useRef<HTMLInputElement>(null);
   const say = (text: string) => setMessage((m) => ({ id: (m?.id || 0) + 1, text }));
 
@@ -71,6 +74,9 @@ function App() {
     const t = setTimeout(() => setStage((n) => n + 1), 500);
     return () => clearTimeout(t);
   }, [stage, analyzing]);
+  useEffect(() => {   // the pipeline reached Quote ready after a new upload: show the summary
+    if (stage >= 4 && !analyzing && reviewDue && rfq) { setReviewDue(false); setReviewOpen(true); }
+  }, [stage, analyzing, reviewDue, rfq]);
   useEffect(() => {
     if (!dropOpen) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setDropOpen(false); };
@@ -121,7 +127,7 @@ function App() {
     setRfq(r); setQuote(null); setAnswers({}); setAnalyzing(true); setStage(1);
     setSelectedLine(r.lines[0]?.id || null);
     // Call 2: catalog matching, compliance and pricing on the extracted lines.
-    try { r = await api.analyze(r.rfq_id); setRfq(r); }
+    try { r = await api.analyze(r.rfq_id); setRfq(r); setReviewDue(true); }
     finally { setAnalyzing(false); }
     setSelectedLine((r.lines.find((l) => l.clarifications.length) || r.lines[0])?.id || null);
     setActiveTab("Line items");
@@ -154,6 +160,7 @@ function App() {
   const draft = () => run("Drafting the quote…", async () => {
     const q = await api.draftQuote(rfq!.rfq_id);
     setQuote(q);
+    setReviewOpen(false);
     setReportOpen(true);
     say(`Quote ${q.id} is drafted: ${money(q.grand_total_usd)}. ${q.warnings.join(" ")}`);
   });
@@ -263,8 +270,9 @@ function App() {
                 const state = index === 4 ? (stage < 4 ? "waiting" : quote ? "done" : "current")
                   : index < stage ? "done" : index === stage ? "active" : "waiting";
                 return (
-                  <div className={`pipeline-step ${state}${index === 4 && quote ? " clickable" : ""}`} key={t}
-                    onClick={index === 4 && quote ? () => setReportOpen(true) : undefined} title={index === 4 && quote ? "Open the quote report" : undefined}>
+                  <div className={`pipeline-step ${state}${index === 4 && stage >= 4 ? " clickable" : ""}`} key={t}
+                    onClick={index === 4 && stage >= 4 ? () => (quote ? setReportOpen(true) : setReviewOpen(true)) : undefined}
+                    title={index === 4 && stage >= 4 ? (quote ? "Open the quote report" : "Open the summary") : undefined}>
                     <div className="step-icon">{state === "active" ? <span className="step-spinner" /> : state === "done" ? <Icon name="check" size={16} /> : <Icon name={icon} size={16} />}</div>
                     <div><strong>{t}</strong><span>{state === "waiting" ? "Waiting" : state === "active" ? "Working…" : sub}</span></div>
                     {index < 4 && <div className="connector" />}
@@ -389,6 +397,11 @@ function App() {
         </div>
       </main>
 
+      {reviewOpen && rfq && !reportOpen && (
+        <ReviewModal rfq={rfq} fileName={fileName} busy={busy} answers={answers}
+          setAnswer={(k, v) => setAnswers((a) => ({ ...a, [k]: v }))} answerable={CLARIFY_FIELDS} numeric={NUMERIC}
+          onApply={submitAnswers} onApprove={approveReady} onDraft={draft} onCopyEmail={copyEmail} onClose={() => setReviewOpen(false)} />
+      )}
       {reportOpen && quote && <QuoteReport quote={quote} rfq={rfq} onClose={() => setReportOpen(false)} />}
 
       {dropOpen && (
