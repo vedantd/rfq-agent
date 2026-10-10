@@ -1157,6 +1157,7 @@ dependencies = [
     { name = "openai" },
     { name = "openpyxl" },
     { name = "pdfplumber" },
+    { name = "python-dotenv" },
     { name = "python-multipart" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -1175,6 +1176,7 @@ requires-dist = [
     { name = "openai" },
     { name = "openpyxl" },
     { name = "pdfplumber" },
+    { name = "python-dotenv", specifier = ">=1.2.4" },
     { name = "python-multipart" },
     { name = "uvicorn", extras = ["standard"] },
 ]

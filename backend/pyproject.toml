@@ -12,6 +12,7 @@ dependencies = [
   "openai",
   "httpx",
   "anthropic>=1.13.0",
+  "python-dotenv>=1.2.4",
 ]
 
 [dependency-groups]

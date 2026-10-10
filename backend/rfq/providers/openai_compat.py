@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 import os
 import time
 
@@ -32,30 +33,53 @@ class OpenAICompatProvider(LLMProvider):
             if a.media_type.startswith("image/"):
                 b64 = base64.standard_b64encode(a.data).decode("ascii")
                 content.append({"type": "image_url", "image_url": {"url": f"data:{a.media_type};base64,{b64}"}})
+        # Gateways route to many models and some ignore response_format (Nicrron's Claude routes answer in
+        # Markdown), so the schema also goes in the instructions and the reply is parsed tolerantly.
+        system = (f"{system}\n\nReply with ONLY one JSON object that matches this JSON Schema. No prose, no Markdown, "
+                  f"no code fences.\n{json.dumps(schema)}")
+        messages = [{"role": "system", "content": system}, {"role": "user", "content": content}]
         t0 = time.monotonic()
+        usage_in = usage_out = 0
+        for attempt in range(2):
+            try:
+                resp = self.client.chat.completions.create(
+                    model=self.model, max_tokens=max_tokens, messages=messages,
+                    response_format={"type": "json_schema", "json_schema": {"name": schema_name, "schema": schema, "strict": True}},
+                )
+            except openai.AuthenticationError as e:
+                raise ProviderUnavailable(f"{self.name} rejected the API key") from e
+            except openai.APIConnectionError as e:
+                raise ProviderUnavailable(f"Could not reach {self.name}") from e
+            except openai.APIStatusError as e:
+                raise ProviderUnavailable(f"{self.name} error {e.status_code}") from e
+            text = resp.choices[0].message.content or ""
+            usage_in += getattr(resp.usage, "prompt_tokens", 0) or 0
+            usage_out += getattr(resp.usage, "completion_tokens", 0) or 0
+            data = parse_json_reply(text)
+            if data is not None:
+                return LLMResult(data=data, model=resp.model or self.model, latency_ms=int((time.monotonic() - t0) * 1000),
+                                 input_tokens=usage_in, output_tokens=usage_out, raw_text=text, meta={"attempts": attempt + 1})
+            messages = messages + [{"role": "assistant", "content": text},
+                                   {"role": "user", "content": "That was not JSON. Reply again with only the JSON object."}]
+        raise ProviderUnavailable(f"{self.name} returned invalid JSON twice")
+
+
+def parse_json_reply(text: str) -> dict | None:
+    """The reply as JSON; else the body of a ```json fence; else the span from the first { to the last }."""
+    candidates = [text.strip()]
+    m = re.search(r"```(?:json)?\s*(.*?)```", text, re.S)
+    if m:
+        candidates.append(m[1].strip())
+    if "{" in text and "}" in text:
+        candidates.append(text[text.index("{"): text.rindex("}") + 1])
+    for c in candidates:
         try:
-            resp = self.client.chat.completions.create(
-                model=self.model,
-                max_tokens=max_tokens,
-                messages=[{"role": "system", "content": system}, {"role": "user", "content": content}],
-                response_format={"type": "json_schema", "json_schema": {"name": schema_name, "schema": schema, "strict": True}},
-            )
-        except openai.AuthenticationError as e:
-            raise ProviderUnavailable(f"{self.name} rejected the API key") from e
-        except openai.APIConnectionError as e:
-            raise ProviderUnavailable(f"Could not reach {self.name}") from e
-        latency = int((time.monotonic() - t0) * 1000)
-        text = resp.choices[0].message.content or ""
-        try:
-            data = json.loads(text)
-        except json.JSONDecodeError as e:
-            raise ProviderUnavailable(f"{self.name} returned invalid JSON") from e
-        usage = resp.usage
-        return LLMResult(
-            data=data, model=resp.model or self.model, latency_ms=latency,
-            input_tokens=getattr(usage, "prompt_tokens", None), output_tokens=getattr(usage, "completion_tokens", None),
-            raw_text=text,
-        )
+            v = json.loads(c)
+            if isinstance(v, dict):
+                return v
+        except json.JSONDecodeError:
+            continue
+    return None
 
 
 def nicrron() -> OpenAICompatProvider:
