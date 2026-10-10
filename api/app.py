@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 import httpx
+import database
 from ai import engine
 from api import store
 import database

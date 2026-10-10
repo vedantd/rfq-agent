@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Tuple
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import database
-import engine
+from ai import engine
 
 
 class EvaluationSuite:

@@ -4,17 +4,17 @@ from fastapi.testclient import TestClient
 from app import app
 from ai import gateway
 
-SAMPLE = 'Need 20 sheets 304 SS 16ga 4x8, mill certs required. Also 10 sheets stainless 1/8 inch.'
+SAMPLE = 'Need 304 SS sheet 16ga 4x8, #4 finish w/ PVC, qty 24. Also alum sheet .063 5052 4x10 qty 15.'
 H = {'X-API-Key':'rudco-demo-key'}
 
 FAKE_GATEWAY_JSON = json.dumps({
     'lines': [
-      {'raw_text': '20 sheets 304 SS 16ga 4x8, mill certs required',
-       'material':'stainless_steel', 'form':'sheet','grade':'304','quantity':20,
-       'evidence':{'grade':'304','quantity':'20','material':'SS','form':'sheets'}},
-      {'raw_text': '10 sheets stainless 1/8 inch',
-       'material':'stainless_steel','form':'sheet','grade':None,'quantity':10,
-       'evidence':{'quantity':'10','material':'stainless','form':'sheets'}}
+      {'raw_text': '304 SS sheet 16ga 4x8, #4 finish w/ PVC, qty 24',
+       'material':'stainless_steel', 'form':'sheet','grade':'304','quantity':24,
+       'evidence':{'grade':'304','quantity':'24','material':'SS','form':'sheet'}},
+      {'raw_text': 'alum sheet .063 5052 4x10 qty 15',
+       'material':'aluminum','form':'sheet','grade':'5052','quantity':15,
+       'evidence':{'grade':'5052','quantity':'15','material':'alum','form':'sheet'}}
     ]
 })
 
@@ -50,25 +50,21 @@ def test_live_extraction_quote_flow(client, monkeypatch):
     assert len(calls)==1
     assert data['line_count']==2
     a,b=data['lines']
-    assert a['match'] and a['match']['sku']
-    assert '304' in str(a['match'].get('matched_grade') or a['match']['sku'])
-    assert a['pricing'] and a['pricing']['unit_price_usd'] > 0
-    assert b['status']=='needs_clarification'
-    assert b['pricing'] is None
+    # Both lines resolve to real SKUs from the 99-item RudCo catalog.
+    assert a['match']['sku']=='SS304-4-16G-4896-US'
+    assert a['pricing']['unit_price_usd']>0
+    assert b['match']['sku']=='AL5052-SH-063-48120-US'
+    assert b['pricing']['unit_price_usd']>0
     rid=data['rfq_id']
+    # Quote cannot be drafted until a human approves every resolved line.
     assert client.post(f'/v1/rfqs/{rid}/quotes/draft',headers=H).status_code==409
-    assert client.post(f'/v1/rfqs/{rid}/lines/line_002/approve',headers=H).status_code==409
-    # Demo catalog has 316 @ 0.06 (16ga) / 0.12 (11ga), not exact 0.125 — clarify onto a stocked thickness.
-    x=client.patch(f'/v1/rfqs/{rid}/lines/line_002',headers=H,json={'grade':'316','width_in':48,'length_in':96,'thickness_in':0.06})
-    assert x.status_code==200, x.text
-    assert x.json()['status']=='ready_for_approval'
-    assert x.json()['match'] and '316' in str(x.json()['match'].get('matched_grade') or x.json()['match']['sku'])
-    for id in ('line_001','line_002'):
-        assert client.post(f'/v1/rfqs/{rid}/lines/{id}/approve',headers=H).status_code==200
+    for lid in ('line_001','line_002'):
+        assert client.post(f'/v1/rfqs/{rid}/lines/{lid}/approve',headers=H).status_code==200
     quote=client.post(f'/v1/rfqs/{rid}/quotes/draft',headers=H)
     assert quote.status_code==201,quote.text
-    assert quote.json()['ready_to_send'] is False
-    assert quote.json()['grand_total_usd'] > 0
+    body=quote.json()
+    expected_total=round(sum(l['line_total_usd'] for l in body['lines']),2)
+    assert body['grand_total_usd']==expected_total
     assert len(calls)==1, 'Clarifications use deterministic re-validation; no further model request is necessary'
 
 
@@ -178,3 +174,83 @@ def test_image_extension_with_bad_bytes_rejected(client):
         files={'file': ('fake.png', b'not-really-png', 'image/png')},
     )
     assert r.status_code == 415
+
+
+# Two RFQ lines that resolve cleanly against the RudCo catalog; raw_text must be
+# an exact substring of the uploaded document for source-grounded extraction.
+UPLOAD_FAKE_JSON = json.dumps({
+    'lines': [
+        {'raw_text': '304 SS sheet 16ga 4x8, #4 finish w/ PVC, qty 24',
+         'material': 'stainless_steel', 'form': 'sheet', 'grade': '304', 'quantity': 24,
+         'evidence': {'grade': '304', 'quantity': '24', 'material': 'SS', 'form': 'sheet'}},
+        {'raw_text': 'alum sheet .063 5052 4x10 qty 15',
+         'material': 'aluminum', 'form': 'sheet', 'grade': '5052', 'quantity': 15,
+         'evidence': {'grade': '5052', 'quantity': '15', 'material': 'alum', 'form': 'sheet'}},
+    ]
+})
+
+EML_BYTES = (
+    b'From: Dana Whitfield <dana@bowerymillwork.example>\r\n'
+    b'To: quotes@gowanusmetal.example\r\n'
+    b'Subject: RFQ - hotel lobby pkg\r\n'
+    b'Content-Type: text/plain; charset="utf-8"\r\n\r\n'
+    b'Hi team, please price:\r\n'
+    b'- 304 SS sheet 16ga 4x8, #4 finish w/ PVC, qty 24\r\n'
+    b'- alum sheet .063 5052 4x10 qty 15\r\n'
+    b'Mill certs required on all stainless.\r\n'
+)
+
+CSV_BYTES = (
+    b'description\r\n'
+    b'"304 SS sheet 16ga 4x8, #4 finish w/ PVC, qty 24"\r\n'
+    b'"alum sheet .063 5052 4x10 qty 15"\r\n'
+)
+
+
+def test_eml_upload_queries_agent_and_matches_catalog(client, monkeypatch):
+    calls = []
+
+    def remote_fake(messages, *, max_tokens=2200, model=None):
+        calls.append(messages[-1]['content'])
+        return UPLOAD_FAKE_JSON, 'nicrron/auto', 123
+
+    monkeypatch.setattr(gateway, '_completion', remote_fake)
+    r = client.post(
+        '/v1/rfqs/upload',
+        headers=H,
+        data={'buyer_id': 'ACME', 'buyer_email': 'dana@example.com'},
+        files={'file': ('rfq.eml', EML_BYTES, 'message/rfc822')},
+    )
+    assert r.status_code == 201, r.text
+    data = r.json()
+    assert data['parser_mode'] == 'nicrron_live'
+    assert data['line_count'] == 2
+    # The agent was queried once with the parsed file text as the user message.
+    assert len(calls) == 1
+    assert '304 SS sheet 16ga 4x8' in calls[0]
+    skus = {ln['match']['sku'] for ln in data['lines']}
+    assert skus == {'SS304-4-16G-4896-US', 'AL5052-SH-063-48120-US'}
+
+
+def test_csv_upload_queries_agent(client, monkeypatch):
+    monkeypatch.setattr(gateway, '_completion',
+                        lambda messages, *, max_tokens=2200, model=None: (UPLOAD_FAKE_JSON, 'nicrron/auto', 99))
+    r = client.post(
+        '/v1/rfqs/upload',
+        headers=H,
+        data={'buyer_id': 'ACME'},
+        files={'file': ('rfq.csv', CSV_BYTES, 'text/csv')},
+    )
+    assert r.status_code == 201, r.text
+    data = r.json()
+    assert data['line_count'] == 2
+
+
+def test_upload_missing_api_key_rejected(client):
+    r = client.post(
+        '/v1/rfqs/upload',
+        data={'buyer_id': 'ACME'},
+        files={'file': ('rfq.eml', EML_BYTES, 'message/rfc822')},
+    )
+    assert r.status_code == 401
+

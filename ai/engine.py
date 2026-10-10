@@ -88,9 +88,9 @@ def extract_rule_line(raw: str, index: int) -> dict:
         grade = None  # Galvanized sheets often don't have an explicit grade
     
     # Finish detection (e.g., 2B, #4, BA, mill, polished).
-    # Do not treat "mill certs / mill test report" as a mill finish.
+    # No leading \b so "#4"/"#8" match after a space; mill handled separately below.
     finish = None
-    finish_match = re.search(r"\b(?:#\d|2b|#2|#4|#8|ba|polished|bright|satin|raw)\b", s, flags=re.I)
+    finish_match = re.search(r"(?:#\d|2b|#2|#4|#8|ba|polished|bright|satin|raw)\b", s, flags=re.I)
     if finish_match:
         finish = finish_match.group(0).upper()
     elif re.search(r"\bmill\b", s) and not re.search(r"\bmill\s*(?:cert|test|report|mtr)s?\b", s):

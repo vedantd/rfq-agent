@@ -12,8 +12,11 @@ from typing import Any, Dict, List, Optional, Tuple
 
 
 def db_path() -> str:
-    """Resolve path to rudco_demo.db, with fallback to environment variable."""
-    # First check environment variable
+    """Resolve path to rudco_demo.db (the RudCo reference dataset).
+
+    Uses RUDCO_DEMO_DB_PATH so the reference DB stays independent of RFQ_DB_PATH,
+    which api.store uses for the per-tenant operational database.
+    """
     env_path = os.getenv('RUDCO_DEMO_DB_PATH')
     if env_path and os.path.isfile(env_path):
         return env_path
