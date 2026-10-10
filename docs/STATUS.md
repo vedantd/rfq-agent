@@ -1,9 +1,30 @@
 # Build status & next plan
 
-**Last verified:** 2026-10-10 against local `uvicorn` on `127.0.0.1:8000` with a real Nicrron key.  
-**Automated tests:** `pytest -q` → **5 passed**.
+**Last verified:** 2026-10-10 14:26 ET against local `uvicorn` on `127.0.0.1:8000` with a real Nicrron key.  
+**Automated tests:** `pytest -q` → **5 passed** (earlier same day).
 
 This is the single source of truth for *what works today* vs *what is still missing*. Party docs (`api.md`, `ai.md`, `frontend.md`) describe ownership; this file describes **runtime status**.
+
+---
+
+## Confirmation run (real Nicrron) — 2026-10-10 14:26 ET
+
+Re-ran the live checklist. Exact outcomes:
+
+| Step | Result | Evidence |
+|---|---|---|
+| 1. Gateway test | **PASS** | `connected: true`, model `anthropic/claude-haiku-4-5`, `latency_ms: 721`, `gateway_call: live` |
+| 2. Text sample RFQ | **PASS** | `rfq_33344141c4f8`, `parser_mode: nicrron_live`, 2 lines, gateway latency **3155 ms**; line_001 → `SS-304-16GA-4896` / `ready_for_approval`; line_002 → `needs_clarification` |
+| 3. Clarify line_002 | **PASS** | grade 316 + 48×96 → `ready_for_approval`, SKU `SS-316-125-4896` |
+| 4. Approve both lines | **PASS** | HTTP **200** / **200** |
+| 5. Draft quote | **PASS** | `quo_b71070bab803`, `status: demo_draft`, `ready_to_send: false`, `grand_total_usd: 9922.5` |
+| 6. Small `.txt` upload → model | **PASS** | `rfq_238f1c22a38f`, `parser_mode: nicrron_live`, 1 line, SKU `SS-304-16GA-4896`, model `anthropic/claude-haiku-4-5`, latency **2249 ms** |
+| 7. Tiny `.png` upload | **FAIL as expected** | HTTP **415** — `Supported formats: .txt .eml .pdf .csv .xlsx` (no OCR; pixels never reach Nicrron) |
+| 8. Demo PDF upload | **FAIL** | HTTP **502** — `Nicrron network or response failure: The read operation timed out` (local PDF text extract exists in code; model call timed out) |
+
+**Verdict:** End-to-end **text** demo with real Nicrron works (ingest → extract → clarify → approve → quote). Small **text-file** upload also routes through Nicrron and extracts/matches. **Images do not.** Large demo PDFs still flake on Nicrron timeout.
+
+**Judge demo script (use this):** Test live model → Process sample text RFQ → clarify line 2 (316 / 48 / 96) → approve both → Generate quote. Optional: upload a short `.txt`, not a photo or the big demo PDF.
 
 ---
 
@@ -43,14 +64,15 @@ No frontend framework, no OpenAI SDK, no OCR library.
 | Text RFQ → extract → match | Sample 2-line RFQ → `parser_mode: nicrron_live`, line 1 SKU `SS-304-16GA-4896` |
 | Clarification + revalidate | `PATCH` grade/width/length → line 2 `SS-316-125-4896`, `ready_for_approval` |
 | Approve + quote draft | Both lines approved → quote `demo_draft`, `ready_to_send: false`, total `$9922.50` |
-| Small file upload | `.txt` upload via `/v1/rfqs/upload` → live extract + match |
+| Small `.txt` upload → Nicrron | Confirmed again: upload → local decode → `extract_live` → SKU match |
 | File text parsers | Demo `.eml` / `.pdf` / `.xlsx` extract readable text locally (pymupdf/openpyxl) |
 | Catalog API (seed) | `GET /v1/catalog/items` → **5** synthetic SKUs |
 | Auth gate | Missing `X-API-Key` → **401** |
 | Webhook guard | Clarification dispatch without env secrets → **412** (does not fake email send) |
 | Unit/API tests | `pytest` stubs `_completion` only inside tests; quote flow covered |
+| Reject unsupported image upload | `.png` → **415** (by design today) |
 
-Happy-path demo narrative for judges **works** on the sample text RFQ.
+Happy-path demo narrative for judges **works** on the sample text RFQ (and short `.txt` upload).
 
 ---
 
@@ -58,7 +80,7 @@ Happy-path demo narrative for judges **works** on the sample text RFQ.
 
 | Capability | What we saw | Why |
 |---|---|---|
-| **Upload larger demo RFQs** | `.eml` → model returned invalid JSON (**502**); `.pdf` / `.xlsx` → Nicrron **timeout** | Upload + text extraction run, then the **same live model call** as text RFQs. Longer messy RFQs exceed timeout / produce bad JSON. Default `NICRRON_TIMEOUT_SECONDS=40`. |
+| **Upload larger demo RFQs** | Reconfirmed: demo PDF → Nicrron **timeout** (**502**). Earlier: `.eml` invalid JSON; `.xlsx` timeout | Upload + text extraction run, then the **same live model call** as text RFQs. Longer messy RFQs exceed timeout / produce bad JSON. Default `NICRRON_TIMEOUT_SECONDS=40`. |
 | **Model selection** | Model is fixed from `.env` as `NICRRON_MODEL=nicrron/auto` | Nicrron *router* may pick an underlying model (shown in responses), but **there is no UI or API to choose a model per request**. Changing model requires editing `.env` and restarting. |
 | **Runtime catalog vs demo dataset** | Runtime seed = **5 SKUs** in `ai/engine.py` | [`rudco_demo_data/`](../rudco_demo_data/) has **99 SKUs** + 4 rich RFQs + answer key — **not wired** into the live app store. Uploading those RFQs will mostly fail to price even if extraction succeeds. |
 | **Clarification email** | Draft endpoint exists; dispatch needs webhook env | No out-of-the-box email; intentional for the hackathon demo. |
@@ -73,6 +95,7 @@ Happy-path demo narrative for judges **works** on the sample text RFQ.
 | **Per-request model override** | `POST /v1/rfqs` body has no `model` field; gateway always reads `NICRRON_MODEL`. |
 | **Sidebar pages** | Overview / Supplier Catalog / Pricing & Compliance / API Integration are **decorative nav** — no click handlers, no routes, no pages. |
 | **Catalog UI** | Catalog only via REST (`GET/PUT /v1/catalog/items`), not in the workspace UI. |
+| **PNG/JPG (or any image) RFQ upload** | Not accepted. No path sends image bytes to Nicrron. Need OCR + new formats to support photos/screenshots. |
 | **OCR for scanned PDFs** | Text-layer PDFs only; no OCR dependency in `requirements.txt`. |
 | **Live market pricing** | Seeded synthetic costs/benchmarks only; quotes stay `demo_draft`. |
 | **Production auth / multi-tenant** | Demo API keys in env JSON; local SQLite only. |
@@ -129,5 +152,5 @@ pytest -q
 
 ## Bottom line
 
-**Built and working:** live Nicrron extraction, sample text RFQ → clarify → approve → `demo_draft` quote, small uploads, catalog API, auth, tests.  
-**Not working / missing as users expect:** in-app **model choosing**, reliable **large document** extraction through the model, wiring the rich **demo dataset**, and real **sidebar/catalog UI**.
+**Working with real Nicrron (reconfirmed):** gateway ping; sample **text** RFQ → clarify → approve → `demo_draft` ($9922.50); small **`.txt` upload** → live extract + SKU match.  
+**Not working:** **image** upload (415); large demo **PDF** through the model (timeout 502); in-app model picker; 99-SKU demo catalog wiring; sidebar pages.
