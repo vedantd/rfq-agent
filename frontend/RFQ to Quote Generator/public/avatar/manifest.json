@@ -1,0 +1,124 @@
+{
+ "width": 1024,
+ "height": 1536,
+ "view": [
+  0,
+  0,
+  1024,
+  1536
+ ],
+ "patches": {
+  "talk.half": {
+   "src": "patches/talk.half.png",
+   "box": [
+    448,
+    303,
+    568,
+    393
+   ],
+   "region": "mouth"
+  },
+  "talk.aa": {
+   "src": "patches/talk.aa.png",
+   "box": [
+    448,
+    303,
+    568,
+    393
+   ],
+   "region": "mouth"
+  },
+  "talk.ee": {
+   "src": "patches/talk.ee.png",
+   "box": [
+    448,
+    303,
+    568,
+    393
+   ],
+   "region": "mouth"
+  },
+  "talk.oh": {
+   "src": "patches/talk.oh.png",
+   "box": [
+    448,
+    303,
+    568,
+    393
+   ],
+   "region": "mouth"
+  },
+  "talk.ou": {
+   "src": "patches/talk.ou.png",
+   "box": [
+    448,
+    303,
+    568,
+    393
+   ],
+   "region": "mouth"
+  },
+  "blink": {
+   "src": "patches/blink.png",
+   "box": [
+    421,
+    218,
+    601,
+    269
+   ],
+   "region": "eyes"
+  }
+ },
+ "gestures": {
+  "explain": {
+   "src": "gestures/explain.webp",
+   "box": [
+    0,
+    0,
+    1024,
+    1536
+   ],
+   "from": "g_explain_0.png"
+  },
+  "point_up": {
+   "src": "gestures/point_up.webp",
+   "box": [
+    0,
+    0,
+    1024,
+    1536
+   ],
+   "from": "g_point_up_0.png"
+  },
+  "present": {
+   "src": "gestures/present.webp",
+   "box": [
+    0,
+    0,
+    1024,
+    1536
+   ],
+   "from": "g_present_0.png"
+  },
+  "crossed": {
+   "src": "gestures/crossed.webp",
+   "box": [
+    0,
+    0,
+    1024,
+    1536
+   ],
+   "from": "g_crossed_0.png"
+  },
+  "together": {
+   "src": "gestures/together.webp",
+   "box": [
+    0,
+    0,
+    1024,
+    1536
+   ],
+   "from": "g_together_0.png"
+  }
+ }
+}

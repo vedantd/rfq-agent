@@ -1,0 +1,10 @@
+{
+  "description": "Transform messy RFQs into structured quotes for industrial buyers, ensuring compliance, price benchmarking, and clarity with automated draft generation.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
