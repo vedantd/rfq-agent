@@ -14,16 +14,19 @@ load_dotenv()
 from fastapi import FastAPI, Depends, File, Form, Header, HTTPException, UploadFile, Request
 from pydantic import BaseModel, Field
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 import httpx
 from ai import engine
 from api import store
 import database
 from ai.gateway import (
-    extract_live, test_connection, config, GatewayConfigurationError, GatewayResponseError,
-    sniff_image_mime, transcribe_image,
+    extract_live, extract_live_from_image, test_connection, config,
+    GatewayConfigurationError, GatewayResponseError, sniff_image_mime,
 )
 
-FRONTEND_INDEX = Path(__file__).resolve().parent.parent / 'frontend' / 'index.html'
+ROOT = Path(__file__).resolve().parent.parent
+FRONTEND_INDEX = ROOT / 'frontend' / 'index.html'
+EXAMPLES_DIR = ROOT / 'examples'
 
 @asynccontextmanager
 async def lifespan(app):
@@ -33,6 +36,9 @@ async def lifespan(app):
 app=FastAPI(title='RudCo Quote API',version='0.1.0',
   description='B2B RFQ normalization, supplier matching, evidence-backed pricing, compliance review and quote drafting. SYNTHETIC DEMO DATA.',
   contact={'name':'QuotePilot Hackathon Demo'}, lifespan=lifespan)
+
+if EXAMPLES_DIR.is_dir():
+    app.mount('/demo-assets', StaticFiles(directory=str(EXAMPLES_DIR)), name='demo-assets')
 
 
 def now()->str: return datetime.now(timezone.utc).isoformat()
@@ -95,36 +101,33 @@ def gateway_error(exc: Exception) -> HTTPException:
     return HTTPException(502,detail=f"Live model extraction failed: {type(exc).__name__}")
 
 
-def create_rfq(body:RFQRequest,tid:str,idem:str|None=None,vision:dict|None=None):
+def create_rfq(
+    body:RFQRequest,
+    tid:str,
+    idem:str|None=None,
+    precomputed:tuple[list[dict],dict]|None=None,
+):
     if idem:
         previous=store.find_idempotent(tid,idem)
         if previous: return engine.summarize(previous)
     rid=f'rfq_{uuid.uuid4().hex[:12]}'
     try:
-        lines, gateway_details = extract_live(body.text)
+        if precomputed is not None:
+            lines, gateway_details = precomputed
+        else:
+            lines, gateway_details = extract_live(body.text)
     except (GatewayConfigurationError, GatewayResponseError) as exc:
         raise gateway_error(exc) from exc
-    if vision:
-        extract_latency = gateway_details.get('latency_ms') or 0
-        vision_latency = vision.get('vision_latency_ms') or 0
-        gateway_details = {
-            **gateway_details,
-            'vision_model': vision.get('vision_model'),
-            'vision_latency_ms': vision_latency,
-            'extract_latency_ms': extract_latency,
-            'latency_ms': extract_latency + vision_latency,
-            'source': vision.get('source', 'image_transcript'),
-            'model': f"{vision.get('vision_model')} → {gateway_details.get('model')}",
-        }
     parser_mode = 'nicrron_live'
     if not lines:
         raise HTTPException(422,'No recognizable material lines found; revise the RFQ text.')
     catalog=store.load_catalog(tid)
     lines=[engine.analyze_line(line,catalog) for line in lines]
     events=[event('rfq.received','RFQ ingested')]
-    if vision:
-        events.append(event('rfq.image_transcribed',
-            f"Vision transcript via {vision.get('vision_model')} ({vision.get('vision_latency_ms')} ms)"))
+    if body.source_type == 'image':
+        events.append(event('rfq.image_extracted',
+            f"Multimodal extract via {gateway_details.get('vision_model') or gateway_details.get('model')} "
+            f"({gateway_details.get('latency_ms')} ms)"))
     events.append(event('rfq.analyzed',f'{len(lines)} lines processed using {parser_mode}'))
     rfq={'id':rid,'tenant_id':tid,'buyer_id':body.buyer_id,'buyer_email':body.buyer_email,
          'source_type':body.source_type,'source_text':body.text,'parser_mode':parser_mode,
@@ -173,7 +176,7 @@ async def ingest_upload(file:UploadFile=File(...),buyer_id:str=Form(...),buyer_e
     raw=await file.read(5_000_001)
     if len(raw)>5_000_000: raise HTTPException(413,'5MB limit for hackathon demo')
     filename=(file.filename or '').lower()
-    vision: dict | None = None
+    precomputed: tuple[list[dict], dict] | None = None
     try:
         if filename.endswith(('.txt','.eml')): text=raw.decode('utf-8')
         elif filename.endswith('.pdf'):
@@ -191,9 +194,10 @@ async def ingest_upload(file:UploadFile=File(...),buyer_id:str=Form(...),buyer_e
             if not mime:
                 raise HTTPException(415,'File looks like an image by name but content is not PNG/JPEG/WebP/GIF')
             try:
-                text, vision = transcribe_image(raw, mime)
+                lines, gateway_details, text = extract_live_from_image(raw, mime)
             except (GatewayConfigurationError, GatewayResponseError) as exc:
                 raise gateway_error(exc) from exc
+            precomputed = (lines, gateway_details)
         else:
             raise HTTPException(415,'Supported formats: .txt .eml .pdf .csv .xlsx .png .jpg .jpeg .webp .gif')
     except HTTPException: raise
@@ -204,7 +208,11 @@ async def ingest_upload(file:UploadFile=File(...),buyer_id:str=Form(...),buyer_e
         source = 'image'
     else:
         source='pdf' if filename.endswith('.pdf') else 'csv' if filename.endswith('.csv') else 'xlsx' if filename.endswith('.xlsx') else 'email' if filename.endswith('.eml') else 'text'
-    return create_rfq(RFQRequest(buyer_id=buyer_id,buyer_email=buyer_email,text=text,source_type=source),tid,vision=vision)
+    return create_rfq(
+        RFQRequest(buyer_id=buyer_id,buyer_email=buyer_email,text=text,source_type=source),
+        tid,
+        precomputed=precomputed,
+    )
 
 @app.get('/v1/rfqs/{rfq_id}',tags=['RFQs'])
 def fetch_rfq(rfq_id:str,tid:str=Depends(tenant)):

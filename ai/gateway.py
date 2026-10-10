@@ -1,6 +1,7 @@
 """Real Nicrron gateway calls. No fake responses or rules-only runtime fallback."""
 from __future__ import annotations
 import base64
+import io
 import json
 import os
 import re
@@ -8,12 +9,17 @@ import time
 from typing import Any
 
 import httpx
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 from ai.engine import extract_rule_line
 
 DEFAULT_BASE_URL = "https://api.nicrron.ai/v1"
-DEFAULT_MODEL = "nicrron/auto"
-DEFAULT_VISION_MODEL = "anthropic/claude-haiku-4-5"
+# nicrron/auto can route to slow reasoning models; fastest keeps text RFQs snappy.
+DEFAULT_MODEL = "nicrron/fastest"
+# Fast/cheap vision default — one multimodal call must finish the image RFQ path.
+DEFAULT_VISION_MODEL = "openai/gpt-4o-mini"
+DEFAULT_VISION_TIMEOUT_SECONDS = 25
+DEFAULT_VISION_MAX_EDGE = 1280
+DEFAULT_VISION_JPEG_QUALITY = 70
 
 SYSTEM_PROMPT = """You extract line items from an industrial buyer RFQ.
 Return a valid JSON object with one top-level key: "lines" (an array).
@@ -38,10 +44,23 @@ Never invent extra line items. Split each separately requested product into its 
 Missing values must be JSON null. Do not include markdown fences, commentary or trailing commas.
 """
 
-IMAGE_TRANSCRIBE_PROMPT = """Transcribe all readable text from this industrial RFQ image or screenshot.
-Return ONLY the plain text that is visibly present. Preserve line breaks where helpful.
-Do not invent, correct, or complete missing text. Do not add commentary or markdown.
-If there is no readable text, reply with exactly: EMPTY
+IMAGE_EXTRACT_PROMPT = """You read an industrial RFQ image (email screenshot, BOM table, photo of notes, or forwarded thread).
+Return ONE valid JSON object with keys:
+- source_text: plain text of readable content needed to ground line items (keep material lines verbatim; you may omit pure chrome/noise)
+- lines: array of metal sheet/plate RFQ line items only
+
+Each lines[] entry MUST have the same fields as a text RFQ extract:
+raw_text, material, form, grade, thickness_in, width_in, length_in, quantity,
+standard_required, required_certificates, country_of_origin_required, evidence
+
+Rules:
+- raw_text MUST be an EXACT contiguous substring of source_text.
+- ONLY extract stainless/carbon steel sheet or plate purchase lines.
+- IGNORE greetings, signatures, phone numbers, PO numbers, addresses, ASAP pleas,
+  email chrome, rev labels, drywall/hardware, coffee notes, unsubscribe footers, and admin rows.
+- Never invent missing grades/sizes. Use JSON null when not visible.
+- If no metal sheet/plate lines are visible, return {"source_text":"","lines":[]}.
+- No markdown fences or commentary.
 """
 
 
@@ -59,7 +78,34 @@ class ModelLine(BaseModel):
     country_of_origin_required: bool = False
     evidence: dict[str, str] = Field(default_factory=dict)
 
+    @field_validator('required_certificates', mode='before')
+    @classmethod
+    def _certs(cls, v):
+        if v is None:
+            return []
+        if isinstance(v, str):
+            low = v.lower()
+            if 'mtr' in low or 'mill cert' in low or 'mill test' in low:
+                return ['MTR']
+            return [v] if v.strip() else []
+        return v
+
+    @field_validator('evidence', mode='before')
+    @classmethod
+    def _evidence(cls, v):
+        return {} if v is None else v
+
+    @field_validator('country_of_origin_required', mode='before')
+    @classmethod
+    def _coo(cls, v):
+        return False if v is None else v
+
 class Extraction(BaseModel):
+    lines: list[ModelLine] = Field(min_length=1, max_length=60)
+
+
+class ImageExtraction(BaseModel):
+    source_text: str = Field(min_length=1)
     lines: list[ModelLine] = Field(min_length=1, max_length=60)
 
 
@@ -77,6 +123,7 @@ def config() -> dict:
         "base_url": os.getenv("NICRRON_BASE_URL", DEFAULT_BASE_URL),
         "model": os.getenv("NICRRON_MODEL", DEFAULT_MODEL),
         "vision_model": os.getenv("NICRRON_VISION_MODEL", DEFAULT_VISION_MODEL),
+        "vision_timeout_seconds": float(os.getenv("NICRRON_VISION_TIMEOUT_SECONDS", str(DEFAULT_VISION_TIMEOUT_SECONDS))),
     }
 
 
@@ -102,19 +149,43 @@ def sniff_image_mime(raw: bytes) -> str | None:
     return None
 
 
+def _prepare_vision_image(image_bytes: bytes, mime: str) -> tuple[bytes, str]:
+    """Downscale and JPEG-compress so the multimodal call stays under the latency budget."""
+    try:
+        from PIL import Image
+    except ImportError:
+        return image_bytes, mime
+    try:
+        img = Image.open(io.BytesIO(image_bytes))
+        img = img.convert("RGB")
+    except Exception as exc:
+        raise GatewayResponseError(f"Could not decode image for vision: {type(exc).__name__}") from exc
+    max_edge = int(os.getenv("NICRRON_VISION_MAX_EDGE", str(DEFAULT_VISION_MAX_EDGE)))
+    w, h = img.size
+    scale = min(1.0, max_edge / max(w, h))
+    if scale < 1.0:
+        img = img.resize((max(1, int(w * scale)), max(1, int(h * scale))), Image.Resampling.LANCZOS)
+    quality = int(os.getenv("NICRRON_VISION_JPEG_QUALITY", str(DEFAULT_VISION_JPEG_QUALITY)))
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=quality, optimize=True)
+    return buf.getvalue(), "image/jpeg"
+
+
 def _completion(
     messages: list[dict[str, Any]],
     *,
     max_tokens: int = 2200,
     model: str | None = None,
+    timeout_seconds: float | None = None,
 ) -> tuple[str, str, int]:
     base, api_key = gateway_auth()
     resolved_model = model or os.getenv("NICRRON_MODEL", DEFAULT_MODEL)
+    timeout = timeout_seconds if timeout_seconds is not None else float(os.getenv("NICRRON_TIMEOUT_SECONDS", "40"))
     start = time.monotonic()
     try:
         # This executes a REAL HTTPS request to the Nicrron API gateway.
         # No local stub, mock response, or fallback in runtime code.
-        with httpx.Client(timeout=float(os.getenv("NICRRON_TIMEOUT_SECONDS", "40"))) as client:
+        with httpx.Client(timeout=timeout) as client:
             response = client.post(
                 base + "/chat/completions",
                 headers={"Authorization": "Bearer " + api_key,
@@ -137,36 +208,6 @@ def _completion(
     if not isinstance(content, str) or not content.strip():
         raise GatewayResponseError("Gateway returned no assistant text")
     return content, real_model, elapsed
-
-
-def transcribe_image(image_bytes: bytes, mime: str) -> tuple[str, dict[str, Any]]:
-    """Send image bytes to a vision-capable Nicrron model; return plain-text transcript + meta."""
-    if mime not in ("image/png", "image/jpeg", "image/webp", "image/gif"):
-        raise GatewayResponseError(f"Unsupported image MIME type for vision: {mime}")
-    vision_model = os.getenv("NICRRON_VISION_MODEL", DEFAULT_VISION_MODEL)
-    data_url = f"data:{mime};base64," + base64.b64encode(image_bytes).decode("ascii")
-    content, model, latency_ms = _completion(
-        [
-            {"role": "system", "content": IMAGE_TRANSCRIBE_PROMPT},
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": "Transcribe the RFQ text in this image."},
-                    {"type": "image_url", "image_url": {"url": data_url}},
-                ],
-            },
-        ],
-        max_tokens=2000,
-        model=vision_model,
-    )
-    text = content.strip()
-    if text.upper() == "EMPTY" or not text:
-        raise GatewayResponseError("Vision model found no readable text in the image")
-    return text, {
-        "vision_model": model,
-        "vision_latency_ms": latency_ms,
-        "source": "image_transcript",
-    }
 
 def test_connection() -> dict:
     response, model, latency = _completion([
@@ -211,30 +252,20 @@ def _tokens(s: str) -> list[str]:
     return re.findall(r"[A-Za-z0-9][A-Za-z0-9.\-/#]*", s.upper())
 
 
-def extract_live(text: str) -> tuple[list[dict], dict]:
-    raw_json, model, latency_ms = _completion([
-        {"role":"system", "content":SYSTEM_PROMPT},
-        {"role":"user", "content":text},
-    ], max_tokens=int(os.getenv("NICRRON_EXTRACT_MAX_TOKENS", "8000")))   # 2800 ran out on 8-line RFQs (finish_reason=length)
-    try:
-        result = Extraction.model_validate(_parse_json(raw_json))
-    except (ValidationError, ValueError) as exc:
-        raise GatewayResponseError("Model output failed schema validation: " + str(exc)[:220]) from exc
-
+def _grounded_lines(result: Extraction, source_text: str) -> list[dict]:
     lines: list[dict] = []
-    source_squashed = _squash(text)
-    source_tokens = set(_tokens(text))
+    source_squashed = _squash(source_text)
+    source_tokens = set(_tokens(source_text))
     for idx, proposed in enumerate(result.lines, start=1):
         raw = proposed.raw_text.strip()
         # PDF text layers break table cells across lines/columns, so the model's joined line is often not one
         # exact substring. Accept it when it matches ignoring whitespace, or when every word in it appears in
         # the source (the model only re-joined words, it added none).
-        if raw in text or _squash(raw) in source_squashed:
+        if raw in source_text or _squash(raw) in source_squashed:
             grounding = 'exact'
         elif _tokens(raw) and set(_tokens(raw)) <= source_tokens:
             grounding = 'words_in_source'
         else:
-            # Can't verify this line: keep it visible for review, but trust nothing extracted from it.
             item = extract_rule_line(raw, idx)
             for f in ('material', 'form', 'grade', 'thickness_in', 'width_in', 'length_in', 'quantity', 'standard_required'):
                 item[f] = None
@@ -242,7 +273,6 @@ def extract_live(text: str) -> tuple[list[dict], dict]:
             item['grounding'] = 'not_found_in_source'
             lines.append(item)
             continue
-        # Start with deterministic extraction; accept LLM supplements ONLY if explicitly evidenced.
         item = extract_rule_line(raw, idx)
         item['grounding'] = grounding
         candidate = proposed.model_dump()
@@ -258,11 +288,69 @@ def extract_live(text: str) -> tuple[list[dict], dict]:
             if field == 'quantity' and value <= 0:
                 continue
             item[field] = value
-        # Certificate flags must be explicitly grounded: deterministic detection is authoritative.
         item['extraction_source'] = 'nicrron_live_plus_validation'
         lines.append(item)
+    return lines
 
-    return lines, {
+
+def extract_live(text: str) -> tuple[list[dict], dict]:
+    raw_json, model, latency_ms = _completion([
+        {"role":"system", "content":SYSTEM_PROMPT},
+        {"role":"user", "content":text},
+    ], max_tokens=int(os.getenv("NICRRON_EXTRACT_MAX_TOKENS", "8000")))
+    try:
+        result = Extraction.model_validate(_parse_json(raw_json))
+    except (ValidationError, ValueError) as exc:
+        raise GatewayResponseError("Model output failed schema validation: " + str(exc)[:220]) from exc
+
+    return _grounded_lines(result, text), {
         "mode":"live_gateway", "gateway":"Nicrron", "model":model,
         "latency_ms":latency_ms, "validation":"source-grounded + deterministic"
     }
+
+
+def extract_live_from_image(image_bytes: bytes, mime: str) -> tuple[list[dict], dict, str]:
+    """One multimodal Nicrron call: structured lines + grounding source_text. Target <25s."""
+    if mime not in ("image/png", "image/jpeg", "image/webp", "image/gif"):
+        raise GatewayResponseError(f"Unsupported image MIME type for vision: {mime}")
+    prepared, out_mime = _prepare_vision_image(image_bytes, mime)
+    vision_model = os.getenv("NICRRON_VISION_MODEL", DEFAULT_VISION_MODEL)
+    vision_timeout = float(os.getenv("NICRRON_VISION_TIMEOUT_SECONDS", str(DEFAULT_VISION_TIMEOUT_SECONDS)))
+    data_url = f"data:{out_mime};base64," + base64.b64encode(prepared).decode("ascii")
+    raw_json, model, latency_ms = _completion(
+        [
+            {"role": "system", "content": IMAGE_EXTRACT_PROMPT},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Extract only metal sheet/plate RFQ lines from this image."},
+                    {"type": "image_url", "image_url": {"url": data_url}},
+                ],
+            },
+        ],
+        max_tokens=1400,
+        model=vision_model,
+        timeout_seconds=vision_timeout,
+    )
+    try:
+        payload = _parse_json(raw_json)
+        result = ImageExtraction.model_validate(payload)
+    except (ValidationError, ValueError) as exc:
+        raise GatewayResponseError("Vision model output failed schema validation: " + str(exc)[:220]) from exc
+    source_text = result.source_text.strip()
+    if not source_text:
+        raise GatewayResponseError("Vision model returned empty source_text")
+    extraction = Extraction(lines=result.lines)
+    lines = _grounded_lines(extraction, source_text)
+    return lines, {
+        "mode": "live_gateway",
+        "gateway": "Nicrron",
+        "model": model,
+        "vision_model": model,
+        "latency_ms": latency_ms,
+        "vision_latency_ms": latency_ms,
+        "source": "image_multimodal",
+        "validation": "source-grounded + deterministic",
+        "image_bytes_in": len(image_bytes),
+        "image_bytes_sent": len(prepared),
+    }, source_text
