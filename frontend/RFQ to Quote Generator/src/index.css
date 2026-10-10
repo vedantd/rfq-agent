@@ -173,3 +173,31 @@ button:disabled { opacity: .55; cursor: default; }
 /* One font everywhere (Manrope); tabular digits keep prices and counts aligned */
 body, button, input, textarea, select, kbd, code, pre { font-family: 'Manrope', sans-serif; }
 body { font-variant-numeric: tabular-nums; }
+
+/* New RFQ drop window */
+.drop-overlay { position: fixed; inset: 0; z-index: 50; background: rgba(15, 25, 20, .45); display: grid; place-items: center; padding: 16px; backdrop-filter: blur(2px); }
+.drop-window { width: min(520px, 100%); min-height: 260px; background: var(--surface); border: 2px dashed #b8c7bf; border-radius: var(--radius-lg); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; color: var(--green); cursor: pointer; box-shadow: 0 20px 60px rgba(10, 30, 20, .25); transition: border-color .15s, background .15s; }
+.drop-window strong { font-size: 13px; color: var(--ink); }
+.drop-window.over, .drop-window:hover { border-color: var(--green); background: var(--green-soft); }
+.drop-window input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.drop-window:focus-within { outline: 2px solid var(--green); outline-offset: 3px; }
+
+/* Taller progress bar, with live progress while a file is analyzed */
+.pipeline { min-height: 96px; position: relative; overflow: hidden; }
+.pipeline .step-icon { width: 34px; height: 34px; }
+.pipeline-step strong { font-size: 11px; }
+.pipeline-step span { font-size: 9.5px; }
+.pipeline-step.waiting { opacity: .45; }
+.pipeline-step.active .step-icon { background: var(--green-soft); box-shadow: 0 0 0 4px rgba(35, 92, 69, .08); }
+.step-spinner { width: 16px; height: 16px; border-radius: 50%; border: 2px solid rgba(35, 92, 69, .25); border-top-color: var(--green); animation: step-spin .8s linear infinite; }
+.pipeline-progress { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: var(--green-soft); overflow: hidden; }
+.pipeline-progress::after { content: ""; position: absolute; top: 0; bottom: 0; width: 30%; background: var(--green); border-radius: 3px; animation: progress-slide 1.4s ease-in-out infinite; }
+@keyframes step-spin { to { transform: rotate(360deg); } }
+@keyframes progress-slide { 0% { left: -30%; } 100% { left: 100%; } }
+@media (prefers-reduced-motion: reduce) { .step-spinner, .pipeline-progress::after { animation-duration: 3s; } }
+
+/* Placeholder rows while the file is analyzed */
+.skeleton-list { padding: 8px 20px 20px; display: grid; gap: 12px; }
+.skeleton-row { display: grid; grid-template-columns: 2fr 2fr 1fr 1fr; gap: 18px; padding: 16px 0; border-bottom: 1px solid var(--soft-line); }
+.skeleton-row span { height: 12px; border-radius: 6px; background: linear-gradient(90deg, #eef1ef 25%, #f7f9f8 50%, #eef1ef 75%); background-size: 200% 100%; animation: shimmer 1.4s linear infinite; }
+@keyframes shimmer { to { background-position: -200% 0; } }
