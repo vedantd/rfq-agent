@@ -83,22 +83,64 @@ class ModelLine(BaseModel):
     def _certs(cls, v):
         if v is None:
             return []
+        if isinstance(v, bool):
+            # Models sometimes answer `true` here. Which certificate is unknown, and certificate
+            # flags are decided by the deterministic rule parser from the source text anyway.
+            return []
         if isinstance(v, str):
             low = v.lower()
             if 'mtr' in low or 'mill cert' in low or 'mill test' in low:
                 return ['MTR']
             return [v] if v.strip() else []
-        return v
+        if isinstance(v, list):
+            return [str(x) for x in v if x not in (None, '', False, True)]
+        return []
+
+    @field_validator('thickness_in', 'width_in', 'length_in', mode='before')
+    @classmethod
+    def _number(cls, v):
+        # "0.06 in" -> 0.06; anything unreadable becomes null (asked as a clarification, never guessed)
+        if v is None or isinstance(v, bool):
+            return None
+        if isinstance(v, (int, float)):
+            return v
+        m = re.search(r'-?\d*\.?\d+', str(v))
+        return float(m.group()) if m else None
+
+    @field_validator('quantity', mode='before')
+    @classmethod
+    def _qty(cls, v):
+        if v is None or isinstance(v, bool):
+            return None
+        if isinstance(v, float):
+            return int(v) if v.is_integer() else None
+        if isinstance(v, int):
+            return v
+        m = re.fullmatch(r'\s*(\d+)\s*[A-Za-z. ]*', str(v))   # "24 sheets" -> 24
+        return int(m.group(1)) if m else None
+
+    @field_validator('material', 'form', 'grade', 'standard_required', mode='before')
+    @classmethod
+    def _text(cls, v):
+        if v is None or isinstance(v, (bool, list, dict)):
+            return None
+        return str(v)
 
     @field_validator('evidence', mode='before')
     @classmethod
     def _evidence(cls, v):
-        return {} if v is None else v
+        if not isinstance(v, dict):
+            return {}
+        return {str(k): str(x) for k, x in v.items() if isinstance(x, (str, int, float)) and not isinstance(x, bool)}
 
     @field_validator('country_of_origin_required', mode='before')
     @classmethod
     def _coo(cls, v):
-        return False if v is None else v
+        if isinstance(v, bool):
+            return v
+        if isinstance(v, str):
+            return v.strip().lower() in ('true', 'yes', 'y', '1')
+        return False
 
 class Extraction(BaseModel):
     lines: list[ModelLine] = Field(min_length=1, max_length=60)
