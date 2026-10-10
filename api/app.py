@@ -15,6 +15,7 @@ from fastapi import FastAPI, Depends, File, Form, Header, HTTPException, UploadF
 from pydantic import BaseModel, Field
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.staticfiles import StaticFiles
 import httpx
 import database
 from ai import engine, market
@@ -40,6 +41,12 @@ app=FastAPI(title='RudCo Quote API',version='0.1.0',
 
 if EXAMPLES_DIR.is_dir():
     app.mount('/demo-assets', StaticFiles(directory=str(EXAMPLES_DIR)), name='demo-assets')
+
+
+# Product photos (one render per product type), referenced by line['product_image'].
+CATALOG_IMAGES = Path(__file__).resolve().parent.parent / 'rudco_demo_data' / 'catalog' / 'images'
+if CATALOG_IMAGES.is_dir():
+    app.mount('/v1/catalog/images', StaticFiles(directory=CATALOG_IMAGES), name='catalog-images')
 
 
 def now()->str: return datetime.now(timezone.utc).isoformat()

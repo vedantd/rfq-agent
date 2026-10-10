@@ -24,6 +24,7 @@ export interface Line {
   required_certificates?: string[];
   blockers: string[];
   clarifications: Clarification[];
+  product_image?: string | null;   // photo of the requested product type (served by the API)
   market_context?: MarketContext | null;   // commodity index that drives this line's price (priced or not)
   match: null | { sku: string; supplier: string; matched_grade: string; supplier_standard: string; reason: string };
   match_candidates?: string[];

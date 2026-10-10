@@ -116,7 +116,7 @@ export default function ReviewModal(p: ReviewProps) {
                 return (
                   <tr key={l.id}>
                     <td>{String(i + 1).padStart(2, "0")}</td>
-                    <td><strong>{l.raw_text}</strong></td>
+                    <td><div className="product-cell">{l.product_image ? <img className="product-thumb" src={l.product_image} alt="" /> : <span className="product-thumb empty" />}<strong>{l.raw_text}</strong></div></td>
                     <td>{l.match ? l.match.sku : "—"}<span>{l.match ? l.match.supplier_standard : l.blockers.join(", ").replace(/_in/g, "")}</span></td>
                     <td className="num">{l.quantity ?? "?"}</td>
                     <td className="num">{money(l.pricing?.line_total_usd)}</td>

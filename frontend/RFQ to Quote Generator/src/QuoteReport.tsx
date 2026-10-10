@@ -50,7 +50,7 @@ export default function QuoteReport({ quote, rfq, onClose }: { quote: Quote; rfq
                 return (
                   <tr key={q.line_id}>
                     <td>{String(i + 1).padStart(2, "0")}</td>
-                    <td><strong>{q.description}</strong><span>{q.sku}{q.standard ? ` · ${q.standard}` : ""}{q.certifications?.length ? ` · ${q.certifications.join(", ")}` : ""}</span></td>
+                    <td><div className="product-cell">{l?.product_image ? <img className="product-thumb" src={l.product_image} alt="" /> : <span className="product-thumb empty" />}<div><strong>{q.description}</strong><span>{q.sku}{q.standard ? ` · ${q.standard}` : ""}{q.certifications?.length ? ` · ${q.certifications.join(", ")}` : ""}</span></div></div></td>
                     <td className="num">{q.quantity}</td>
                     <td className="num">{money(q.unit_price_usd)}</td>
                     <td className="num"><strong>{money(q.line_total_usd)}</strong></td>

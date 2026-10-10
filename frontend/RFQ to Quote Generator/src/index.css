@@ -277,3 +277,6 @@ body { font-variant-numeric: tabular-nums; }
 .market-cite { font-size: 10.5px; color: #3d4843; }
 .market-cite strong { color: var(--green); }
 .market-cite a { color: var(--green); text-decoration: underline; text-underline-offset: 2px; }
+.product-cell { display: flex; align-items: center; gap: 10px; }
+.product-thumb { width: 52px; height: 40px; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); background: #f3f5f4; flex: none; }
+.product-thumb.empty { display: inline-block; }
