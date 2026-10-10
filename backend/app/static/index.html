@@ -37,7 +37,11 @@ h1 { font: 700 22px var(--display); margin: 0; letter-spacing: -.01em; }
 .avatar-slot b { display: block; }
 .avatar-slot span { color: var(--muted); font-size: 12px; }
 .avatar-slot { align-items: flex-end; }
-.portrait { position: relative; width: 168px; aspect-ratio: 1; border-radius: 10px; overflow: hidden; flex: none; background: #d4d4d4; }
+.portrait { position: relative; width: 176px; aspect-ratio: 1; border-radius: 10px; overflow: hidden; flex: none; background: #cdcdcb; }
+.stage img.gesture { opacity: 0; transition: opacity .35s ease; }
+.stage img.patch.pulse { animation: blinkpulse .14s linear 1; }
+@keyframes blinkpulse { 0%, 99% { visibility: visible; } 100% { visibility: hidden; } }
+.stage img.gesture.on { opacity: 1; }
 .stage { position: absolute; transform-origin: 50% 80%; animation: breathe 4.6s ease-in-out infinite; }
 .stage img { position: absolute; display: block; user-select: none; pointer-events: none; }
 .stage img.patch { visibility: hidden; }
@@ -175,20 +179,29 @@ async function initAvatar() {
   const base = el("img"); base.src = "/avatar/base.webp"; base.alt = "";
   Object.assign(base.style, { left: 0, top: 0, width: "100%", height: "100%" });
   stage.append(base);
-  for (const [name, p] of Object.entries(man.patches)) {
-    const im = el("img", "patch"); im.src = "/avatar/" + p.src; im.alt = "";
+  portrait.style.aspectRatio = `${vw} / ${VIEW[3] - VIEW[1]}`;
+  const layer = (cls, p) => {
+    const im = el("img", cls); im.src = "/avatar/" + p.src; im.alt = "";
     const [x0, y0, x1, y1] = p.box;
     Object.assign(im.style, { left: x0 / man.width * 100 + "%", top: y0 / man.height * 100 + "%",
       width: (x1 - x0) / man.width * 100 + "%", height: (y1 - y0) / man.height * 100 + "%" });
-    stage.append(im); avatar.patches[name] = im;
-  }
+    stage.append(im); return im;
+  };
+  avatar.gestures = {};
+  for (const [name, p] of Object.entries(man.gestures || {})) avatar.gestures[name] = layer("gesture", p);  // arms, under the face
+  for (const [name, p] of Object.entries(man.patches)) avatar.patches[name] = layer("patch", p);
   portrait.append(stage, el("span", "ai-tag", "AI avatar"));
   slot.querySelector(".face").replaceWith(portrait);
   const who = slot.querySelector("div:last-child"); who.classList.add("who");
   avatar.state = el("span", "state", "listening"); who.append(avatar.state);
   avatar.ready = true;
+  // The blink length is a CSS animation so a throttled background tab can't leave the eyes shut.
   (function blinkLoop() {
-    setTimeout(() => { setPatch("blink", true); setTimeout(() => { setPatch("blink", false); blinkLoop(); }, 130); }, 2500 + Math.random() * 3500);
+    setTimeout(() => {
+      const b = avatar.patches["blink"];
+      if (b) { b.classList.remove("pulse"); void b.offsetWidth; b.classList.add("pulse"); }
+      blinkLoop();
+    }, 2500 + Math.random() * 3500);
   })();
 }
 function setPatch(name, on) { const p = avatar.patches[name]; if (p) p.classList.toggle("on", on); }
@@ -199,14 +212,40 @@ function setMouth(name) {
   if (name) setPatch(name, true);
 }
 
+// Gestures: a new one for each sentence (and at most every ~2 s), never the same twice in a row; relaxed when done.
+function setGesture(name) {
+  if (avatar.gesture === name) return;
+  if (avatar.gesture && avatar.gestures[avatar.gesture]) avatar.gestures[avatar.gesture].classList.remove("on");
+  avatar.gesture = name;
+  if (name && avatar.gestures[name]) avatar.gestures[name].classList.add("on");
+}
+function nextGesture(text) {
+  const names = Object.keys(avatar.gestures || {});
+  if (!names.length) return null;
+  const t = text.toLowerCase();
+  let pick = /\?|which|what|need/.test(t) ? "think" : /\$|price|quote|ready|line/.test(t) ? "present" : null;
+  if (!pick || !avatar.gestures[pick] || pick === avatar.gesture) {
+    const pool = names.filter((n) => n !== avatar.gesture);
+    pick = pool[Math.floor(Math.random() * pool.length)];
+  }
+  return pick;
+}
+
 async function reveal(node, text) {
   if (!avatar.ready || matchMedia("(prefers-reduced-motion: reduce)").matches) { node.textContent = text; return; }
   avatar.state.textContent = "speaking";
   node.textContent = "";
-  let last = 0;
+  let last = 0, lastGesture = 0;
+  const sentences = text.match(/[^.!?]+[.!?]*/g) || [text];
+  let sIdx = 0, sEnd = sentences[0].length;
+  setGesture(nextGesture(sentences[0])); lastGesture = performance.now();
   for (let i = 0; i < text.length; i++) {
     const ch = text[i], lc = ch.toLowerCase(), now = performance.now();
     node.textContent += ch;
+    if (i >= sEnd && sIdx < sentences.length - 1) {
+      sIdx++; sEnd += sentences[sIdx].length;
+      if (now - lastGesture > 1800) { setGesture(nextGesture(sentences[sIdx])); lastGesture = now; }
+    }
     if (/[.!?:]/.test(ch)) { setMouth(null); await sleep(260); continue; }
     if (/[,;\n]/.test(ch)) { setMouth(null); await sleep(140); continue; }
     if (now - last > HOLD) {
@@ -217,6 +256,8 @@ async function reveal(node, text) {
     await sleep(1000 / CPS);
   }
   setMouth(null);
+  await sleep(500);
+  setGesture(null);
   avatar.state.textContent = "listening";
 }
 

@@ -1,92 +1,124 @@
 {
  "width": 1024,
- "height": 1024,
- "regions": {
-  "mouth": [
-   405,
-   438,
-   605,
-   588
-  ],
-  "eyes": [
-   360,
-   296,
-   660,
-   382
-  ],
-  "face": [
-   330,
-   260,
-   690,
-   600
-  ]
- },
+ "height": 1536,
+ "view": [
+  0,
+  0,
+  1024,
+  1536
+ ],
  "patches": {
   "talk.half": {
    "src": "patches/talk.half.png",
    "box": [
-    405,
-    438,
-    605,
-    588
+    448,
+    303,
+    568,
+    393
    ],
-   "region": "mouth",
-   "from": "talk.half_0.png"
+   "region": "mouth"
   },
   "talk.aa": {
    "src": "patches/talk.aa.png",
    "box": [
-    405,
-    438,
-    605,
-    588
+    448,
+    303,
+    568,
+    393
    ],
-   "region": "mouth",
-   "from": "talk.aa_1.png"
+   "region": "mouth"
   },
   "talk.ee": {
    "src": "patches/talk.ee.png",
    "box": [
-    405,
-    438,
-    605,
-    588
+    448,
+    303,
+    568,
+    393
    ],
-   "region": "mouth",
-   "from": "talk.ee_1.png"
+   "region": "mouth"
   },
   "talk.oh": {
    "src": "patches/talk.oh.png",
    "box": [
-    405,
-    438,
-    605,
-    588
+    448,
+    303,
+    568,
+    393
    ],
-   "region": "mouth",
-   "from": "talk.oh_0.png"
+   "region": "mouth"
   },
   "talk.ou": {
    "src": "patches/talk.ou.png",
    "box": [
-    405,
-    438,
-    605,
-    588
+    448,
+    303,
+    568,
+    393
    ],
-   "region": "mouth",
-   "from": "talk.ou_1.png"
+   "region": "mouth"
   },
   "blink": {
    "src": "patches/blink.png",
    "box": [
-    360,
-    296,
-    660,
-    382
+    421,
+    218,
+    601,
+    269
    ],
-   "region": "eyes",
-   "from": "blink_0.png"
+   "region": "eyes"
+  }
+ },
+ "gestures": {
+  "explain": {
+   "src": "gestures/explain.webp",
+   "box": [
+    0,
+    0,
+    1024,
+    1536
+   ],
+   "from": "g_explain_0.png"
+  },
+  "point_up": {
+   "src": "gestures/point_up.webp",
+   "box": [
+    0,
+    0,
+    1024,
+    1536
+   ],
+   "from": "g_point_up_0.png"
+  },
+  "present": {
+   "src": "gestures/present.webp",
+   "box": [
+    0,
+    0,
+    1024,
+    1536
+   ],
+   "from": "g_present_0.png"
+  },
+  "crossed": {
+   "src": "gestures/crossed.webp",
+   "box": [
+    0,
+    0,
+    1024,
+    1536
+   ],
+   "from": "g_crossed_0.png"
+  },
+  "together": {
+   "src": "gestures/together.webp",
+   "box": [
+    0,
+    0,
+    1024,
+    1536
+   ],
+   "from": "g_together_0.png"
   }
  }
 }
