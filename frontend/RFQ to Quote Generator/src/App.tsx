@@ -5,7 +5,7 @@ import Icon, { type IconName } from "./Icon";
 import Reasoning from "./Reasoning";
 import QuoteReport from "./QuoteReport";
 import ReviewModal from "./ReviewModal";
-import { api, ApiError, money, type Line, type Quote, type RFQ } from "./api";
+import { api, ApiError, money, type CatalogItem, type Line, type Quote, type RFQ } from "./api";
 
 const nav = [
   { label: "Overview", icon: "grid" as IconName },
@@ -58,7 +58,8 @@ function App() {
   const [analyzing, setAnalyzing] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);   // final quote report pop-up
   const [reviewOpen, setReviewOpen] = useState(false);   // summary + questions pop-up at Quote ready
-  const [reviewDue, setReviewDue] = useState(false);     // open the review once the pipeline reaches Quote ready   // between the extract call and the analyze call   // pipeline steps completed (0-4); animates 1 -> 4 after a response
+  const [reviewDue, setReviewDue] = useState(false);     // open the review once the pipeline reaches Quote ready
+  const [catalog, setCatalog] = useState<CatalogItem[]>([]);   // answer options for clarifying questions   // between the extract call and the analyze call   // pipeline steps completed (0-4); animates 1 -> 4 after a response
   const fileInput = useRef<HTMLInputElement>(null);
   const say = (text: string) => setMessage((m) => ({ id: (m?.id || 0) + 1, text }));
 
@@ -74,9 +75,12 @@ function App() {
     const t = setTimeout(() => setStage((n) => n + 1), 500);
     return () => clearTimeout(t);
   }, [stage, analyzing]);
-  useEffect(() => {   // the pipeline reached Quote ready after a new upload: show the summary
-    if (stage >= 4 && !analyzing && reviewDue && rfq) { setReviewDue(false); setReviewOpen(true); }
+  useEffect(() => {   // the pipeline reached Quote ready: let it show green for half a second, then open the summary
+    if (!(stage >= 4 && !analyzing && reviewDue && rfq)) return;
+    const t = setTimeout(() => { setReviewDue(false); setReviewOpen(true); }, 500);
+    return () => clearTimeout(t);
   }, [stage, analyzing, reviewDue, rfq]);
+  useEffect(() => { if (reviewOpen && !catalog.length) api.catalog().then(setCatalog).catch(() => setCatalog([])); }, [reviewOpen, catalog.length]);
   useEffect(() => {
     if (!dropOpen) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setDropOpen(false); };
@@ -398,7 +402,7 @@ function App() {
       </main>
 
       {reviewOpen && rfq && !reportOpen && (
-        <ReviewModal rfq={rfq} fileName={fileName} busy={busy} answers={answers}
+        <ReviewModal rfq={rfq} fileName={fileName} busy={busy} answers={answers} catalog={catalog}
           setAnswer={(k, v) => setAnswers((a) => ({ ...a, [k]: v }))} answerable={CLARIFY_FIELDS} numeric={NUMERIC}
           onApply={submitAnswers} onApprove={approveReady} onDraft={draft} onCopyEmail={copyEmail} onClose={() => setReviewOpen(false)} />
       )}

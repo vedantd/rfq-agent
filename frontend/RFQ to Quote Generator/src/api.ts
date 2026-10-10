@@ -61,6 +61,12 @@ export interface Quote {
   lines: { line_id: string; sku: string; description: string; quantity: number; unit_price_usd: number; line_total_usd: number; standard: string; certifications: string[] }[];
 }
 
+export interface CatalogItem {
+  sku: string; material?: string | null; material_family?: string | null; form?: string | null; shape?: string | null;
+  grade?: string | null; thickness_in?: number | string | null; gauge?: string | number | null;
+  width_in?: number | string | null; length_in?: number | string | null; finish?: string | null;
+}
+
 export class ApiError extends Error {
   constructor(public status: number, message: string, public detail?: unknown) { super(message); }
 }
@@ -95,6 +101,7 @@ export const api = {
   clarify: (id: string, lineId: string, fields: Record<string, string | number>) => call<Line>("PATCH", `/v1/rfqs/${id}/lines/${lineId}`, fields),
   approve: (id: string, lineId: string) => call<Line>("POST", `/v1/rfqs/${id}/lines/${lineId}/approve`),
   emailDraft: (id: string) => call<{ to: string | null; subject: string; body: string; delivery_status: string }>("GET", `/v1/rfqs/${id}/clarifications/email-draft`),
+  catalog: () => call<{ items: CatalogItem[] }>("GET", "/v1/catalog/items").then((r) => r.items),
   draftQuote: (id: string) => call<Quote>("POST", `/v1/rfqs/${id}/quotes/draft`),
 };
 
