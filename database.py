@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional, Tuple
 def db_path() -> str:
     """Resolve path to rudco_demo.db, with fallback to environment variable."""
     # First check environment variable
-    env_path = os.getenv('RFQ_DB_PATH')
+    env_path = os.getenv('RUDCO_DEMO_DB_PATH')
     if env_path and os.path.isfile(env_path):
         return env_path
     
@@ -30,7 +30,7 @@ def db_path() -> str:
         return str(fallback)
     
     raise FileNotFoundError(
-        f"rudco_demo.db not found. Set RFQ_DB_PATH env var or place at "
+        f"rudco_demo.db not found. Set RUDCO_DEMO_DB_PATH env var or place at "
         f"{db_file} or {fallback}"
     )
 

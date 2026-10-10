@@ -17,6 +17,7 @@ from fastapi.responses import HTMLResponse
 import httpx
 from ai import engine
 from api import store
+import database
 from ai.gateway import extract_live, test_connection, config, transcribe_images, GatewayConfigurationError, GatewayResponseError
 
 FRONTEND_INDEX = Path(__file__).resolve().parent.parent / 'frontend' / 'index.html'
@@ -294,6 +295,50 @@ def put_catalog(sku:str,item:CatalogItem,tid:str=Depends(tenant)):
     if sku!=item.sku: raise HTTPException(422,'Path SKU and body SKU must match')
     store.upsert_catalog(tid,item.model_dump())
     return {'upserted':sku,'tenant_id':tid}
+
+@app.get('/v1/catalog/search',tags=['Catalog'])
+def search_catalog(material: str | None = None, grade: str | None = None, form: str | None = None, finish: str | None = None, tid: str = Depends(tenant)):
+    """Search the database catalog by material, grade, form, and finish (case-insensitive)."""
+    results = database.search_catalog(material=material, grade=grade, form=form, finish=finish)
+    return {'results': results, 'count': len(results), 'filters': {'material': material, 'grade': grade, 'form': form, 'finish': finish}}
+
+@app.get('/v1/catalog/benchmarks',tags=['Catalog'])
+def get_benchmarks(tid: str = Depends(tenant)):
+    """Retrieve all pricing benchmarks used for quote validation."""
+    benchmarks = database.load_benchmarks()
+    return {'benchmarks': list(benchmarks.values()), 'count': len(benchmarks)}
+
+@app.get('/v1/catalog/compliance-rules',tags=['Catalog'])
+def get_compliance_rules(tid: str = Depends(tenant)):
+    """Retrieve all compliance rules used for procurement validation."""
+    rules = database.load_compliance_rules()
+    return {'rules': rules, 'count': len(rules), 'note': 'Use rule_id and trigger_in_rfq to determine applicability'}
+
+@app.get('/v1/catalog/gauge-table',tags=['Catalog'])
+def get_gauge_table(tid: str = Depends(tenant)):
+    """Retrieve material-specific gauge-to-thickness conversion tables."""
+    tables = database.load_gauge_tables()
+    return {'gauge_tables': tables, 'materials': list(tables.get(list(tables.keys())[0], {}).keys()) if tables else [], 'note': 'Convert gauge notation to decimal thickness'}
+
+@app.get('/v1/catalog/tube-gauge',tags=['Catalog'])
+def get_tube_gauge(tid: str = Depends(tenant)):
+    """Retrieve tube wall gauge-to-thickness conversion table (different from sheet gauge)."""
+    tube_gauge = database.load_tube_gauge()
+    return {'tube_gauge': tube_gauge, 'note': 'Tube wall gauge differs from sheet gauge; e.g., 16 ga tube wall = 0.065\", sheet = 0.0625\"'}
+
+@app.get('/v1/catalog/synonyms',tags=['Catalog'])
+def get_synonyms(tid: str = Depends(tenant)):
+    """Retrieve term normalization mappings (e.g., 'SS' -> 'stainless steel')."""
+    synonyms = database.load_synonyms()
+    return {'synonyms': synonyms, 'count': len(synonyms), 'note': 'Applied during RFQ text normalization'}
+
+@app.get('/v1/catalog/health',tags=['Catalog'])
+def check_catalog_health(tid: str = Depends(tenant)):
+    """Verify that all database tables are populated and accessible."""
+    is_valid, message = database.verify_database()
+    if not is_valid:
+        raise HTTPException(503, {'status': 'degraded', 'error': message})
+    return {'status': 'healthy', 'message': message}
 
 @app.post('/v1/rfqs/{rfq_id}/quotes/draft',status_code=201,tags=['Review & quotes'])
 def draft_quote(rfq_id:str,tid:str=Depends(tenant)):
