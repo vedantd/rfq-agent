@@ -256,3 +256,17 @@ body { font-variant-numeric: tabular-nums; }
   .report { box-shadow: none; max-height: none; overflow: visible; width: 100%; }
   .report-actions, .report-head .icon-button { display: none; }
 }
+
+/* Review pop-up at Quote ready */
+.review-questions { display: grid; gap: 10px; }
+.review-questions > strong { font-size: 12px; }
+.review-questions .muted { margin: -6px 0 0; font-size: 10.5px; color: var(--muted); }
+.review-line { border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; display: grid; gap: 10px; background: #fcfdfc; }
+.review-line-head { display: flex; align-items: center; gap: 10px; font-size: 11.5px; }
+.review-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+.review-field { display: grid; gap: 5px; font-size: 10.5px; color: #3d4843; }
+.review-field input { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 8px 10px; font: inherit; font-size: 12px; background: white; }
+.review-field input:focus-visible { outline: 2px solid var(--green); outline-offset: 1px; }
+.review-field em { font-style: normal; color: var(--amber); }
+.review-apply { display: flex; justify-content: flex-end; }
+.review-busy { font-size: 10.5px; color: var(--green); text-align: right; margin-top: -8px; }
