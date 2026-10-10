@@ -22,9 +22,14 @@ SERIES: dict[str, dict[str, str]] = {
     "PALUMUSDM": {"name": "Global price of Aluminum (IMF)", "unit": "USD per metric ton", "commodity": "aluminum"},
     "WPU102504": {"name": "PPI: Nickel and nickel-base alloy mill shapes (BLS)", "unit": "index 1982=100", "commodity": "nickel_mill"},
     "WPU102501": {"name": "PPI: Aluminum mill shapes (BLS)", "unit": "index 1982=100", "commodity": "aluminum_mill"},
+    "WPU101704": {"name": "PPI: Hot rolled steel bars, plates and structural shapes (BLS)", "unit": "index 1982=100", "commodity": "carbon_plate"},
+    "WPU1017": {"name": "PPI: Steel mill products (BLS)", "unit": "index 1982=100", "commodity": "carbon_steel"},
 }
-# Which headline series gives context for which material (stainless is ~8-10% nickel and priced off it)
-MATERIAL_SERIES = {"stainless": "PNICKUSDM", "aluminum": "PALUMUSDM"}
+# Which series gives context for which material: stainless is ~8-10% nickel and priced off it;
+# carbon plate/bar/shapes follow hot-rolled steel; other carbon steel follows steel mill products.
+MATERIAL_SERIES = {"stainless": "PNICKUSDM", "aluminum": "PALUMUSDM", "carbon_plate": "WPU101704", "carbon": "WPU1017"}
+DRIVER = {"stainless": ("nickel", "stainless steel"), "aluminum": ("aluminum", "aluminum"),
+          "carbon_plate": ("hot-rolled steel", "carbon steel plate/bar"), "carbon": ("steel mill", "carbon steel")}
 
 _cache: dict[str, Any] = {"at": 0.0, "data": None}
 _lock = threading.Lock()
@@ -103,23 +108,33 @@ def fetch_indices() -> dict:
     return data
 
 
-def market_context_for_line(material: str | None, grade: str | None = None) -> dict | None:
-    """Citation for the commodity that drives this material's price, or None if none applies."""
-    m = (material or "").lower()
-    kind = "stainless" if "stainless" in m or str(grade or "").startswith(("304", "316")) else "aluminum" if "alum" in m else None
+def _kind(material: str | None, grade: str | None, form: str | None) -> str | None:
+    m, g, f = (material or "").lower(), str(grade or "").upper(), (form or "").lower()
+    if "stainless" in m or g.startswith(("304", "316")):
+        return "stainless"
+    if "alum" in m:
+        return "aluminum"
+    if "carbon" in m or "galv" in m or g.startswith(("A36", "A500", "CS")):
+        return "carbon_plate" if any(k in f for k in ("plate", "bar", "structural", "angle", "hss")) else "carbon"
+    return None
+
+
+def market_context_for_line(material: str | None, grade: str | None = None, form: str | None = None) -> dict | None:
+    """Citation for the commodity that drives this line's price, or None if none applies."""
+    kind = _kind(material, grade, form)
     if not kind:
         return None
     data = fetch_indices()
     want = MATERIAL_SERIES[kind]
-    commodity = "nickel" if kind == "stainless" else "aluminum"
-    pick = next((i for i in data["indices"] if i["series_id"] == want), None) or \
-        next((i for i in data["indices"] if i.get("commodity") == commodity), None)
+    commodity = {"stainless": "nickel", "aluminum": "aluminum", "carbon_plate": "carbon_plate", "carbon": "carbon_steel"}[kind]
+    pick = next((i for i in data["indices"] if i["series_id"] == want), None) or         next((i for i in data["indices"] if i.get("commodity") == commodity), None)
     if not pick or pick.get("value") is None:
         return None
     label = f"FRED {pick['series_id']}" if pick["live"] else f"synthetic {pick['series_id']}"
     return {
         "series_id": pick["series_id"], "name": pick["name"], "value": pick["value"], "unit": pick.get("unit"),
         "as_of": pick.get("as_of"), "live": pick["live"], "source": pick.get("source"), "source_url": pick.get("source_url"),
-        "driver": f"{commodity} drives {kind} prices",
+        "driver": f"{DRIVER[kind][0]} prices drive {' '.join(x for x in (str(grade or '').upper(), DRIVER[kind][1]) if x)}",
+        "applies_to": " ".join(x for x in (str(grade or "").upper(), DRIVER[kind][1], (form or "")) if x),
         "citation": f"{pick['name']} {pick['value']:,.2f} {pick.get('unit') or ''} as of {pick.get('as_of')} ({label})".replace("  ", " "),
     }

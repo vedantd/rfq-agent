@@ -367,12 +367,14 @@ function App() {
                   <div className="attention-content">
                     <div className="attention-head"><span className="amber-icon"><Icon name="clock" size={15} /></span><div><strong>{current.raw_text}</strong><span>{current.id} · {(STATUS_LABEL[current.status] || { text: current.status }).text}</span></div></div>
                     {current.pricing && <p>{current.pricing.explanation.replace(/ Market context:.*$/, "")}{current.pricing.below_benchmark_pct != null ? ` ${current.pricing.below_benchmark_pct}% below benchmark.` : ""}</p>}
-                    {current.pricing?.market_context && (
-                      <p className="market-cite"><strong>{current.pricing.market_context.live ? "Live market:" : "Synthetic index:"}</strong>{" "}
-                        {current.pricing.market_context.source_url
-                          ? <a href={current.pricing.market_context.source_url} target="_blank" rel="noreferrer">{current.pricing.market_context.citation}</a>
-                          : current.pricing.market_context.citation}</p>
-                    )}
+                    {(() => {
+                      const mc = current.pricing?.market_context || current.market_context;
+                      return mc && (
+                        <p className="market-cite"><strong>{mc.live ? "Live market" : "Synthetic index"} for line {Number(current.id.replace(/\D/g, "")) || current.id}:</strong>{" "}
+                          {mc.driver ? `${mc.driver}. ` : ""}
+                          {mc.source_url ? <a href={mc.source_url} target="_blank" rel="noreferrer">{mc.citation}</a> : mc.citation}</p>
+                      );
+                    })()}
                     {current.compliance.issues.length > 0 && <p className="issue">{current.compliance.issues.join(" · ")}</p>}
                     {current.clarifications.map((c) => (
                       <div className="question-box" key={c.field}>

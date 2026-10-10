@@ -676,6 +676,12 @@ def apply_compliance_rules(line: dict, candidates: list[dict]) -> dict:
 
 def summarize(rfq:dict)->dict:
     lines=rfq.get('lines',[])
+    for ln in lines:   # market context for every line with a known material, priced or not
+        if 'market_context' not in ln:
+            try:
+                ln['market_context'] = (ln.get('pricing') or {}).get('market_context') or market.market_context_for_line(ln.get('material'), ln.get('grade'), ln.get('form'))
+            except Exception:
+                ln['market_context'] = None
     return {
       'rfq_id':rfq['id'],'tenant_id':rfq['tenant_id'],'buyer_id':rfq['buyer_id'],
       'buyer_email':rfq.get('buyer_email'),'status': 'needs_clarification' if any(x['status']=='needs_clarification' for x in lines) else 'review_required' if any(x['status']!='approved' for x in lines) else 'approved',

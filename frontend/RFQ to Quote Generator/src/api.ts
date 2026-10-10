@@ -24,6 +24,7 @@ export interface Line {
   required_certificates?: string[];
   blockers: string[];
   clarifications: Clarification[];
+  market_context?: MarketContext | null;   // commodity index that drives this line's price (priced or not)
   match: null | { sku: string; supplier: string; matched_grade: string; supplier_standard: string; reason: string };
   match_candidates?: string[];
   pricing: null | {
@@ -38,7 +39,7 @@ export interface Line {
 
 export interface MarketContext {
   series_id: string; name: string; value: number; unit?: string | null; as_of?: string | null;
-  live: boolean; source?: string | null; source_url?: string | null; driver?: string; citation: string;
+  live: boolean; source?: string | null; source_url?: string | null; driver?: string; applies_to?: string; citation: string;
 }
 
 export interface RFQ {
