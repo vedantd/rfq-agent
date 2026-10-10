@@ -5,6 +5,7 @@ This repo is split so each working group can edit with clear boundaries. Read **
 | Party | Folder | Doc | Owns |
 |---|---|---|---|
 | Product / hackathon | — | [overview.md](overview.md) | Track goals, demo narrative, non-goals |
+| **Status / plan** | — | **[STATUS.md](STATUS.md)** | **What is verified working vs missing (read this first)** |
 | API / backend | [`api/`](../api/) | [api.md](api.md) | FastAPI routes, auth, SQLite, webhooks |
 | AI / domain | [`ai/`](../ai/) | [ai.md](ai.md) | Nicrron gateway, extraction, match/price/compliance |
 | Frontend | [`frontend/`](../frontend/) | [frontend.md](frontend.md) | Single-page RFQ workspace UI |

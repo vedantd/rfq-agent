@@ -17,7 +17,7 @@ examples/            Live smoke scripts
 app.py               Thin entrypoint: uvicorn app:app
 ```
 
-Start with [docs/README.md](docs/README.md). Each folder also has a short `README.md` pointing at the right doc.
+Start with [docs/STATUS.md](docs/STATUS.md) for **what works vs what’s missing**, then [docs/README.md](docs/README.md) for party ownership. Each folder also has a short `README.md` pointing at the right doc.
 
 ## Team guardrails
 
