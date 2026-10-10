@@ -1,0 +1,11 @@
+rule_id,trigger_in_rfq,requirement,catalog_field,pass_condition,on_fail
+CR-01,MTR / mill cert / test report,Mill test report must ship with material,mtr_available,== 'Y',WARN: no MTR available for this SKU; ask buyer to accept C of C
+CR-02,EN 10204 3.1,Inspection certificate 3.1,mtr_type,== 'EN 10204 3.1',WARN
+CR-03,Buy America / FTA / 49 CFR 661 / BABA,Domestic melt AND manufacture,buy_america_compliant,== 'Y' (origin US and melt US),BLOCK: cannot quote as compliant; offer domestic alternative or ask
+CR-04,DFARS,Specialty metals melted in US or qualifying country,dfars_compliant,== 'Y',BLOCK
+CR-05,COO / country of origin,State country of origin per line,country_of_origin,not blank,WARN
+CR-06,Domestic preferred,Prefer US origin when available,country_of_origin,== 'US',WARN: no domestic option
+CR-07,AAMA 611,Anodized finish certified to AAMA 611 (class as stated),certifications,contains 'AAMA 611',BLOCK
+CR-08,LEED / recycled content,Recycled content % documented,recycled_content_pct,not blank,WARN: documentation not available
+CR-09,ASTM spec cited in RFQ,Catalog standard must match the cited spec,standard,matches,CLARIFY
+CR-10,Required-by date,Stock or lead time must meet date,stock_qty / lead_time_days,stock >= qty or lead fits,WARN: partial availability

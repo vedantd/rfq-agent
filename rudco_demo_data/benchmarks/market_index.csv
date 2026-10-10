@@ -1,0 +1,37 @@
+index_id,name,unit,month,value,source
+LME-NI,"Nickel (LME cash, SYNTHETIC)",$/t,2026-05,15200,SYNTHETIC demo data - not real market prices
+LME-NI,"Nickel (LME cash, SYNTHETIC)",$/t,2026-06,15550,SYNTHETIC demo data - not real market prices
+LME-NI,"Nickel (LME cash, SYNTHETIC)",$/t,2026-07,15900,SYNTHETIC demo data - not real market prices
+LME-NI,"Nickel (LME cash, SYNTHETIC)",$/t,2026-08,16300,SYNTHETIC demo data - not real market prices
+LME-NI,"Nickel (LME cash, SYNTHETIC)",$/t,2026-09,16650,SYNTHETIC demo data - not real market prices
+LME-NI,"Nickel (LME cash, SYNTHETIC)",$/t,2026-10,16900,SYNTHETIC demo data - not real market prices
+LME-AL,"Aluminum (LME cash, SYNTHETIC)",$/t,2026-05,2480,SYNTHETIC demo data - not real market prices
+LME-AL,"Aluminum (LME cash, SYNTHETIC)",$/t,2026-06,2510,SYNTHETIC demo data - not real market prices
+LME-AL,"Aluminum (LME cash, SYNTHETIC)",$/t,2026-07,2465,SYNTHETIC demo data - not real market prices
+LME-AL,"Aluminum (LME cash, SYNTHETIC)",$/t,2026-08,2530,SYNTHETIC demo data - not real market prices
+LME-AL,"Aluminum (LME cash, SYNTHETIC)",$/t,2026-09,2590,SYNTHETIC demo data - not real market prices
+LME-AL,"Aluminum (LME cash, SYNTHETIC)",$/t,2026-10,2620,SYNTHETIC demo data - not real market prices
+MW-PREM,US Midwest aluminum premium (SYNTHETIC),cents/lb,2026-05,62,SYNTHETIC demo data - not real market prices
+MW-PREM,US Midwest aluminum premium (SYNTHETIC),cents/lb,2026-06,64,SYNTHETIC demo data - not real market prices
+MW-PREM,US Midwest aluminum premium (SYNTHETIC),cents/lb,2026-07,63,SYNTHETIC demo data - not real market prices
+MW-PREM,US Midwest aluminum premium (SYNTHETIC),cents/lb,2026-08,66,SYNTHETIC demo data - not real market prices
+MW-PREM,US Midwest aluminum premium (SYNTHETIC),cents/lb,2026-09,68,SYNTHETIC demo data - not real market prices
+MW-PREM,US Midwest aluminum premium (SYNTHETIC),cents/lb,2026-10,69,SYNTHETIC demo data - not real market prices
+US-HRC,US hot rolled coil (SYNTHETIC),$/short ton,2026-05,880,SYNTHETIC demo data - not real market prices
+US-HRC,US hot rolled coil (SYNTHETIC),$/short ton,2026-06,865,SYNTHETIC demo data - not real market prices
+US-HRC,US hot rolled coil (SYNTHETIC),$/short ton,2026-07,850,SYNTHETIC demo data - not real market prices
+US-HRC,US hot rolled coil (SYNTHETIC),$/short ton,2026-08,840,SYNTHETIC demo data - not real market prices
+US-HRC,US hot rolled coil (SYNTHETIC),$/short ton,2026-09,855,SYNTHETIC demo data - not real market prices
+US-HRC,US hot rolled coil (SYNTHETIC),$/short ton,2026-10,870,SYNTHETIC demo data - not real market prices
+SUR-304,304 alloy surcharge (SYNTHETIC),$/lb,2026-05,0.78,SYNTHETIC demo data - not real market prices
+SUR-304,304 alloy surcharge (SYNTHETIC),$/lb,2026-06,0.8,SYNTHETIC demo data - not real market prices
+SUR-304,304 alloy surcharge (SYNTHETIC),$/lb,2026-07,0.83,SYNTHETIC demo data - not real market prices
+SUR-304,304 alloy surcharge (SYNTHETIC),$/lb,2026-08,0.86,SYNTHETIC demo data - not real market prices
+SUR-304,304 alloy surcharge (SYNTHETIC),$/lb,2026-09,0.89,SYNTHETIC demo data - not real market prices
+SUR-304,304 alloy surcharge (SYNTHETIC),$/lb,2026-10,0.91,SYNTHETIC demo data - not real market prices
+SUR-316,316 alloy surcharge (SYNTHETIC),$/lb,2026-05,1.38,SYNTHETIC demo data - not real market prices
+SUR-316,316 alloy surcharge (SYNTHETIC),$/lb,2026-06,1.41,SYNTHETIC demo data - not real market prices
+SUR-316,316 alloy surcharge (SYNTHETIC),$/lb,2026-07,1.45,SYNTHETIC demo data - not real market prices
+SUR-316,316 alloy surcharge (SYNTHETIC),$/lb,2026-08,1.5,SYNTHETIC demo data - not real market prices
+SUR-316,316 alloy surcharge (SYNTHETIC),$/lb,2026-09,1.54,SYNTHETIC demo data - not real market prices
+SUR-316,316 alloy surcharge (SYNTHETIC),$/lb,2026-10,1.57,SYNTHETIC demo data - not real market prices

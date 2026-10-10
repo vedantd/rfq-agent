@@ -1,0 +1,21 @@
+benchmark_id,material_family,grade,form,finish_class,low_per_lb,median_per_lb,high_per_lb,unit,basis,small_order_adder_pct,domestic_premium_pct,as_of,source
+BM-SS304-SH-2B,stainless steel,304,sheet,2B,2.85,3.2,3.65,USD/lb,"FOB distributor, 1,000-5,000 lb order",8-15 (<500 lb),6-12 vs import,2026-10-05,SYNTHETIC demo data - not real market prices
+BM-SS304-SH-4,stainless steel,304,sheet,#4,3.2,3.58,4.1,USD/lb,"FOB distributor, 1,000-5,000 lb order",8-15 (<500 lb),6-12 vs import,2026-10-05,SYNTHETIC demo data - not real market prices
+BM-SS304-SH-BA,stainless steel,304,sheet,BA,3.1,3.45,3.95,USD/lb,"FOB distributor, 1,000-5,000 lb order",8-15 (<500 lb),6-12 vs import,2026-10-05,SYNTHETIC demo data - not real market prices
+BM-SS316-SH-2B,stainless steel,316,sheet,2B,4.05,4.5,5.1,USD/lb,"FOB distributor, 1,000-5,000 lb order",8-15 (<500 lb),6-12 vs import,2026-10-05,SYNTHETIC demo data - not real market prices
+BM-SS316-SH-4,stainless steel,316,sheet,#4,4.45,4.9,5.55,USD/lb,"FOB distributor, 1,000-5,000 lb order",8-15 (<500 lb),6-12 vs import,2026-10-05,SYNTHETIC demo data - not real market prices
+BM-SS304-PL,stainless steel,304,plate,No.1 HRAP,2.95,3.3,3.8,USD/lb,"FOB distributor, 1,000-5,000 lb order",8-15 (<500 lb),6-12 vs import,2026-10-05,SYNTHETIC demo data - not real market prices
+BM-SS304-TUBE-4,stainless steel,304,ornamental tube,#4,4.2,4.75,5.4,USD/lb,"FOB distributor, 1,000-5,000 lb order",8-15 (<500 lb),6-12 vs import,2026-10-05,SYNTHETIC demo data - not real market prices
+BM-SS304-BAR,stainless steel,304,flat bar,hot rolled annealed,3.1,3.5,4.0,USD/lb,"FOB distributor, 1,000-5,000 lb order",8-15 (<500 lb),6-12 vs import,2026-10-05,SYNTHETIC demo data - not real market prices
+BM-AL3003-SH,aluminum,3003,sheet,mill,3.05,3.4,3.9,USD/lb,"FOB distributor, 1,000-5,000 lb order",8-15 (<500 lb),6-12 vs import,2026-10-05,SYNTHETIC demo data - not real market prices
+BM-AL5052-SH,aluminum,5052,sheet,mill,3.35,3.75,4.3,USD/lb,"FOB distributor, 1,000-5,000 lb order",8-15 (<500 lb),6-12 vs import,2026-10-05,SYNTHETIC demo data - not real market prices
+BM-AL5005-AN,aluminum,5005,sheet,clear anodized,4.4,4.95,5.7,USD/lb,"FOB distributor, 1,000-5,000 lb order",8-15 (<500 lb),6-12 vs import,2026-10-05,SYNTHETIC demo data - not real market prices
+BM-AL6061-PL,aluminum,6061,plate,mill,3.55,3.95,4.55,USD/lb,"FOB distributor, 1,000-5,000 lb order",8-15 (<500 lb),6-12 vs import,2026-10-05,SYNTHETIC demo data - not real market prices
+BM-AL6063-EXT,aluminum,6063,extrusion,mill,3.4,3.85,4.4,USD/lb,"FOB distributor, 1,000-5,000 lb order",8-15 (<500 lb),6-12 vs import,2026-10-05,SYNTHETIC demo data - not real market prices
+BM-AL6061-EXT,aluminum,6061,extrusion,mill,3.7,4.15,4.75,USD/lb,"FOB distributor, 1,000-5,000 lb order",8-15 (<500 lb),6-12 vs import,2026-10-05,SYNTHETIC demo data - not real market prices
+BM-AL3003-TREAD,aluminum,3003,tread plate,mill,3.45,3.85,4.4,USD/lb,"FOB distributor, 1,000-5,000 lb order",8-15 (<500 lb),6-12 vs import,2026-10-05,SYNTHETIC demo data - not real market prices
+BM-GALV-G90,galvanized steel,CS Type B,sheet,G90,0.88,1.02,1.2,USD/lb,"FOB distributor, 1,000-5,000 lb order",8-15 (<500 lb),6-12 vs import,2026-10-05,SYNTHETIC demo data - not real market prices
+BM-GALV-G60,galvanized steel,CS Type B,sheet,G60,0.84,0.97,1.14,USD/lb,"FOB distributor, 1,000-5,000 lb order",8-15 (<500 lb),6-12 vs import,2026-10-05,SYNTHETIC demo data - not real market prices
+BM-CS-A36-PL,carbon steel,A36,plate,hot rolled,0.78,0.92,1.08,USD/lb,"FOB distributor, 1,000-5,000 lb order",8-15 (<500 lb),6-12 vs import,2026-10-05,SYNTHETIC demo data - not real market prices
+BM-CS-A36-SHAPE,carbon steel,A36,structural,hot rolled,0.82,0.96,1.12,USD/lb,"FOB distributor, 1,000-5,000 lb order",8-15 (<500 lb),6-12 vs import,2026-10-05,SYNTHETIC demo data - not real market prices
+BM-CS-A500-HSS,carbon steel,A500 Gr B/C,HSS,black,0.9,1.05,1.24,USD/lb,"FOB distributor, 1,000-5,000 lb order",8-15 (<500 lb),6-12 vs import,2026-10-05,SYNTHETIC demo data - not real market prices

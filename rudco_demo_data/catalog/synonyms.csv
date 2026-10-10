@@ -1,0 +1,69 @@
+term,canonical,field,note
+SS,stainless steel,material,
+S/S,stainless steel,material,
+stainless,stainless steel,material,
+SST,stainless steel,material,
+T304,304,grade,
+type 304,304,grade,
+304L,304,grade,stocked dual-cert 304/304L
+T316,316,grade,
+316L,316,grade,stocked dual-cert 316/316L
+2205,duplex 2205,grade,NOT STOCKED
+duplex,duplex 2205,grade,NOT STOCKED
+alum,aluminum,material,
+alum.,aluminum,material,
+AL,aluminum,material,
+aluminium,aluminum,material,UK spelling
+galv,galvanized steel,material,
+galvanized,galvanized steel,material,
+HDG,galvanized steel,material,hot-dip galvanized; coating weight still needed
+CS,carbon steel,material,
+HR,carbon steel,material,hot rolled; default A36 for plate/bar/shapes
+MS,carbon steel,material,mild steel; default A36
+black,carbon steel,material,uncoated HSS/pipe
+brass,brass,material,NOT STOCKED
+#4,#4,finish,brushed / satin
+No. 4,#4,finish,
+brushed,#4,finish,
+satin,#4,finish,
+polished,#4,finish,ambiguous with #8 mirror; #8 not stocked
+mirror,#8,finish,NOT STOCKED
+#8,#8,finish,NOT STOCKED
+2B,2B,finish,cold rolled mill finish
+mill finish,2B (stainless) / mill (aluminum),finish,depends on material
+BA,BA,finish,bright annealed
+bright annealed,BA,finish,
+clear anod,clear anodized,finish,
+anod,anodized,finish,
+diamond plate,tread plate,form,
+checker plate,tread plate,form,
+treadplate,tread plate,form,
+SHT,sheet,form,
+sht,sheet,form,
+PL,plate,form,
+PLT,plate,form,
+L,angle,form,L3x3x1/4 = angle 3 x 3 x 1/4
+C,channel,form,
+HSS,HSS square/rect tube,form,ASTM A500
+FB,flat bar,form,
+4x8,48 x 96,size,feet -> inches
+4' x 8',48 x 96,size,
+4x10,48 x 120,size,
+5x10,60 x 120,size,
+4x12,48 x 144,size,
+1220x2440,48 x 96,size,"metric nominal, mm"
+1250x2500,49.2 x 98.4,size,"metric, not stocked"
+sticks,lengths,uom,
+lgths,lengths,uom,
+pcs,EA,uom,
+sh,EA (sheet),uom,
+ga,gauge,thickness,see gauge_table.csv; meaning differs by material
+1/8,0.125 in,thickness,stainless 1/8 sheet is commonly 11 ga (0.120)
+MTR,mill test report,compliance,
+mill cert,mill test report,compliance,
+3.1 cert,EN 10204 3.1,compliance,
+COO,country of origin,compliance,
+Buy America,Buy America (domestic melt + manufacture),compliance,
+BABA,"Build America, Buy America",compliance,
+DFARS,DFARS specialty metals,compliance,
+LEED,recycled content documentation,compliance,
